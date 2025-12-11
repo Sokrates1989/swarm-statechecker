@@ -99,6 +99,59 @@ show_stack_logs() {
     esac
 }
 
+toggle_phpmyadmin() {
+    load_env
+    local stack_name="${STACK_NAME:-statechecker-server}"
+
+    echo "🔁 Toggle phpMyAdmin service for stack: $stack_name"
+    echo ""
+
+    if ! docker service inspect "${stack_name}_phpmyadmin" >/dev/null 2>&1; then
+        echo "phpMyAdmin service not found. Make sure the stack is deployed."
+        return
+    fi
+
+    local current_replicas
+    current_replicas=$(docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "${stack_name}_phpmyadmin" 2>/dev/null || echo "0")
+    local new_replicas
+    if [ "$current_replicas" -eq 0 ] 2>/dev/null; then
+        new_replicas=1
+    else
+        new_replicas=0
+    fi
+
+    echo "Scaling ${stack_name}_phpmyadmin from $current_replicas to $new_replicas replicas..."
+    docker service scale "${stack_name}_phpmyadmin=$new_replicas"
+
+    if [ -f .env ]; then
+        if grep -q '^PHPMYADMIN_REPLICAS=' .env; then
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                sed -i '' "s/^PHPMYADMIN_REPLICAS=.*/PHPMYADMIN_REPLICAS=$new_replicas/" .env
+            else
+                sed -i "s/^PHPMYADMIN_REPLICAS=.*/PHPMYADMIN_REPLICAS=$new_replicas/" .env
+            fi
+        else
+            echo "PHPMYADMIN_REPLICAS=$new_replicas" >> .env
+        fi
+    fi
+
+    if [ "$new_replicas" -eq 0 ] 2>/dev/null; then
+        echo "phpMyAdmin is now DISABLED."
+    else
+        if [ -f .env ]; then
+            local url
+            url=$(grep '^PHPMYADMIN_URL=' .env 2>/dev/null | cut -d'=' -f2 | tr -d ' "')
+            if [ -n "$url" ]; then
+                echo "phpMyAdmin is now ENABLED. Access it via https://$url"
+            else
+                echo "phpMyAdmin is now ENABLED."
+            fi
+        else
+            echo "phpMyAdmin is now ENABLED."
+        fi
+    fi
+}
+
 create_required_secrets_menu() {
     echo ""
     echo "🔐 Create required secrets"
@@ -167,10 +220,11 @@ show_main_menu() {
         echo "6) Create required secrets"
         echo "7) Create optional secrets (Telegram, Email, Google Drive)"
         echo "8) List all secrets"
-        echo "9) Exit"
+        echo "9) Toggle phpMyAdmin (enable/disable)"
+        echo "10) Exit"
         echo ""
         
-        read -p "Your choice (1-9): " choice
+        read -p "Your choice (1-10): " choice
         
         case $choice in
             1)
@@ -199,6 +253,9 @@ show_main_menu() {
                 list_secrets
                 ;;
             9)
+                toggle_phpmyadmin
+                ;;
+            10)
                 echo "👋 Goodbye!"
                 exit 0
                 ;;

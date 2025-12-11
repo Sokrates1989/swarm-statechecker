@@ -34,3 +34,6 @@ logs/check/dayBased/*
 !logs/check/.gitkeep
 !logs/check/dayBased/
 !logs/check/dayBased/.gitkeep
+
+# .DS_Store files of macOS.
+.DS_Store
