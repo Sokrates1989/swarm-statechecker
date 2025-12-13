@@ -14,6 +14,7 @@ SETUP_DIR="${SCRIPT_DIR}/setup"
 
 # Source modules
 source "${SETUP_DIR}/modules/docker_helpers.sh"
+source "${SETUP_DIR}/modules/ci-cd-github.sh"
 source "${SETUP_DIR}/modules/menu_handlers.sh"
 
 echo "🔍 Swarm Statechecker - Quick Start"
@@ -34,9 +35,29 @@ if [ ! -f .env ]; then
         read -p "Create .env from template? (Y/n): " create_env
         if [[ ! "$create_env" =~ ^[Nn]$ ]]; then
             cp setup/.env.template .env
+            if ! grep -q '^TRAEFIK_NETWORK_NAME=' .env 2>/dev/null; then
+                preferred=("traefik-public" "traefik_public" "traefik")
+                networks=$(docker network ls --filter driver=overlay --format "{{.Name}}" 2>/dev/null || true)
+                for n in "${preferred[@]}"; do
+                    if echo "$networks" | grep -qx "$n"; then
+                        update_env_values ".env" "TRAEFIK_NETWORK_NAME" "$n"
+                        echo "✅ Auto-detected common Traefik network: $n (saved to .env)"
+                        break
+                    fi
+                done
+            fi
             echo "✅ .env created from template"
             echo "⚠️  Please edit .env with your configuration before deploying"
             echo ""
+
+            EDITOR_CMD="${EDITOR:-nano}"
+            if ! command -v "$EDITOR_CMD" >/dev/null 2>&1; then
+                EDITOR_CMD="vi"
+            fi
+            read -p "Open .env now in $EDITOR_CMD? (Y/n): " open_env
+            if [[ ! "$open_env" =~ ^[Nn]$ ]]; then
+                "$EDITOR_CMD" .env
+            fi
         fi
     fi
 fi
@@ -46,8 +67,15 @@ echo "🔐 Checking secrets..."
 if ! check_required_secrets; then
     echo ""
     echo "⚠️  Some required secrets are missing"
-    read -p "Create them now? (Y/n): " create_secrets
-    if [[ ! "$create_secrets" =~ ^[Nn]$ ]]; then
+    echo "How do you want to create secrets?"
+    echo "1) Create from secrets.env file"
+    echo "2) Create interactively"
+    echo ""
+    read -p "Your choice (1-2) [2]: " create_mode
+    create_mode="${create_mode:-2}"
+    if [ "$create_mode" = "1" ]; then
+        create_secrets_from_env_file "secrets.env" "setup/secrets.env.template" || exit 1
+    else
         create_required_secrets_menu
     fi
 fi

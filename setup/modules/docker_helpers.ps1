@@ -116,3 +116,63 @@ function Test-OptionalSecrets {
         }
     }
 }
+
+function New-SecretsFromFile {
+    param(
+        [string]$SecretsFile = "secrets.env",
+        [string]$TemplateFile = "setup\secrets.env.template"
+    )
+
+    if (-not (Test-Path $SecretsFile)) {
+        if (Test-Path $TemplateFile) {
+            Copy-Item $TemplateFile $SecretsFile -Force
+            Write-Host "Created $SecretsFile from template. Please edit it and rerun." -ForegroundColor Yellow
+            return $false
+        }
+        Write-Host "Secrets file not found: $SecretsFile" -ForegroundColor Red
+        return $false
+    }
+
+    $lines = Get-Content $SecretsFile -ErrorAction SilentlyContinue
+    foreach ($line in $lines) {
+        $trim = $line.Trim()
+        if (-not $trim) { continue }
+        if ($trim.StartsWith("#")) { continue }
+
+        $parts = $trim -split "=", 2
+        if ($parts.Count -ne 2) { continue }
+        $key = $parts[0].Trim()
+        $value = $parts[1]
+
+        if ([string]::IsNullOrWhiteSpace($key)) { continue }
+        if ([string]::IsNullOrWhiteSpace($value)) { continue }
+
+        if ($key -eq "STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON" -and (Test-Path $value)) {
+            if (Test-SecretExists -SecretName $key) {
+                $recreate = Read-Host "Secret '$key' exists. Delete and recreate? (y/N)"
+                if ($recreate -match '^[Yy]$') {
+                    docker secret rm $key 2>$null | Out-Null
+                } else {
+                    continue
+                }
+            }
+            docker secret create $key $value 2>$null | Out-Null
+            continue
+        }
+
+        if (Test-SecretExists -SecretName $key) {
+            $recreate = Read-Host "Secret '$key' exists. Delete and recreate? (y/N)"
+            if ($recreate -match '^[Yy]$') {
+                docker secret rm $key 2>$null | Out-Null
+            } else {
+                continue
+            }
+        }
+
+        $value | docker secret create $key - 2>$null | Out-Null
+    }
+
+    return (Test-RequiredSecrets)
+}
+
+Export-ModuleMember -Function Test-DockerSwarm, Test-SecretExists, New-DockerSecret, New-SecretsFromFile, Get-SecretList, Test-RequiredSecrets, Test-OptionalSecrets

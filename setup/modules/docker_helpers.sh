@@ -87,6 +87,97 @@ create_secret_from_file() {
     fi
 }
 
+create_secret_from_value() {
+    local secret_name="$1"
+    local secret_value="$2"
+
+    if [ -z "$secret_name" ]; then
+        return 1
+    fi
+
+    if [ -z "$secret_value" ]; then
+        echo "❌ Secret value cannot be empty for $secret_name"
+        return 1
+    fi
+
+    if check_secret_exists "$secret_name"; then
+        read -p "Secret '$secret_name' already exists. Delete and recreate? (y/N): " recreate
+        if [[ "$recreate" =~ ^[Yy]$ ]]; then
+            docker secret rm "$secret_name" >/dev/null 2>&1 || true
+        else
+            echo "⏭️  Keeping existing secret: $secret_name"
+            return 0
+        fi
+    fi
+
+    echo -n "$secret_value" | docker secret create "$secret_name" - >/dev/null 2>&1
+    return $?
+}
+
+create_secrets_from_env_file() {
+    local secrets_file="${1:-secrets.env}"
+    local template_file="${2:-setup/secrets.env.template}"
+
+    if [ ! -f "$secrets_file" ]; then
+        if [ -f "$template_file" ]; then
+            cp "$template_file" "$secrets_file"
+            echo "✅ Created $secrets_file from template: $template_file"
+            echo "⚠️  Please edit $secrets_file and re-run this action."
+            read -p "Open $secrets_file in editor now? (Y/n): " open_file
+            if [[ ! "$open_file" =~ ^[Nn]$ ]]; then
+                if command -v nano &> /dev/null; then
+                    nano "$secrets_file"
+                elif command -v vim &> /dev/null; then
+                    vim "$secrets_file"
+                else
+                    echo "No editor found. Please edit $secrets_file manually."
+                fi
+            fi
+            return 1
+        fi
+
+        echo "❌ Secrets template not found: $template_file"
+        return 1
+    fi
+
+    local key value
+    while IFS='=' read -r key value || [ -n "$key" ]; do
+        key="${key%$'\r'}"
+        value="${value%$'\r'}"
+        if [ -z "$key" ]; then
+            continue
+        fi
+        case "$key" in
+            \#*)
+                continue
+                ;;
+        esac
+
+        if [[ "$key" =~ ^\  ]]; then
+            key="${key# }"
+        fi
+
+        if [ "$key" = "STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON" ] && [ -n "$value" ] && [ -f "$value" ]; then
+            if check_secret_exists "$key"; then
+                read -p "Secret '$key' already exists. Delete and recreate? (y/N): " recreate
+                if [[ "$recreate" =~ ^[Yy]$ ]]; then
+                    docker secret rm "$key" >/dev/null 2>&1 || true
+                else
+                    continue
+                fi
+            fi
+            create_secret_from_file "$key" "$value" || return 1
+            continue
+        fi
+
+        if [ -n "$value" ]; then
+            create_secret_from_value "$key" "$value" || return 1
+        fi
+    done < "$secrets_file"
+
+    check_required_secrets
+}
+
 list_secrets() {
     echo "📋 Current secrets:"
     docker secret ls

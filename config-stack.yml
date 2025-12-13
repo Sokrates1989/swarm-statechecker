@@ -149,6 +149,7 @@ networks:
     driver: overlay
   traefik:
     external: true
+    name: ${TRAEFIK_NETWORK_NAME:-traefik}
 
 secrets:
   "STATECHECKER_SERVER_AUTHENTICATION_TOKEN":

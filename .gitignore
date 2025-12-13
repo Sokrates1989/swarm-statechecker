@@ -35,5 +35,8 @@ logs/check/dayBased/*
 !logs/check/dayBased/
 !logs/check/dayBased/.gitkeep
 
+# Auto-generated MariaDB-compatible SQL files (created by setup wizard when restoring MySQL 8 backups).
+*__mariadb.sql
+
 # .DS_Store files of macOS.
 .DS_Store
