@@ -21,6 +21,23 @@ if (-not (Test-DockerSwarm)) {
 }
 Write-Host ""
 
+# Check Docker Compose
+try {
+    if (Get-Command docker-compose -ErrorAction SilentlyContinue) {
+        $null = docker-compose --version 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "Docker Compose not available" }
+    } else {
+        $null = docker compose version 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "Docker Compose not available" }
+    }
+} catch {
+    Write-Host "[ERROR] Docker Compose is not available!" -ForegroundColor Red
+    Write-Host "Please install a current Docker version with Compose plugin" -ForegroundColor Yellow
+    exit 1
+}
+Write-Host "Docker Compose is available" -ForegroundColor Green
+Write-Host ""
+
 # Check if .env exists
 if (-not (Test-Path .env)) {
     Write-Host "[WARN] .env file not found" -ForegroundColor Yellow

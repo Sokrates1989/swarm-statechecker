@@ -27,6 +27,15 @@ if ! check_docker_swarm; then
 fi
 echo ""
 
+# Docker Compose check
+if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+    echo "❌ Docker Compose is not available!"
+    echo "📥 Please install a current Docker version with Compose plugin"
+    exit 1
+fi
+echo "✅ Docker Compose is available"
+echo ""
+
 # Check if .env exists
 if [ ! -f .env ]; then
     echo "⚠️  .env file not found"

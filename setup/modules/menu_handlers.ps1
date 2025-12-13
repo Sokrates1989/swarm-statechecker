@@ -2,6 +2,10 @@
 # PowerShell module for handling menu actions
 
 function Get-EnvConfig {
+    <#
+    .SYNOPSIS
+    Reads key/value pairs from .env into a hashtable.
+    #>
     if (Test-Path .env) {
         $envContent = Get-Content .env -ErrorAction SilentlyContinue
         $config = @{}
@@ -60,14 +64,32 @@ function Update-EnvValue {
     }
 }
 
+function Set-ProcessEnvFromConfig {
+    <#
+    .SYNOPSIS
+    Loads values from a hashtable into the current process environment.
+
+    .DESCRIPTION
+    Docker Compose variable substitution for swarm stacks requires environment
+    variables to be available at deploy time. This helper ensures .env values
+    are exported for the docker-compose config rendering step.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Config
+    )
+
+    foreach ($key in $Config.Keys) {
+        $value = $Config[$key]
+        if ($null -ne $value) {
+            [Environment]::SetEnvironmentVariable($key, $value, "Process")
+        }
+    }
+}
+
 function Deploy-Stack {
     <#
     .SYNOPSIS
-    Deploys the Swarm stack.
-
-    .DESCRIPTION
-    Renders config-stack.yml via docker-compose/docker compose config (env substitution), then deploys
-    the rendered config via docker stack deploy.
+    Deploys the stack using config-stack.yml with env-variable substitution.
     #>
     $config = Get-EnvConfig
     $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
@@ -80,12 +102,13 @@ function Deploy-Stack {
         return
     }
     
+    Set-ProcessEnvFromConfig -Config $config
+
     $stackFile = "config-stack.yml"
     $envFile = ".env"
-
     $tempConfig = ".stack-deploy-temp.yml"
-    $renderExit = 1
 
+    $renderExit = 1
     if (Get-Command docker-compose -ErrorAction SilentlyContinue) {
         $composeSupportsEnvFile = $false
         try {
@@ -105,25 +128,25 @@ function Deploy-Stack {
         if ($LASTEXITCODE -ne 0) {
             Write-Host "[WARN] Neither docker-compose nor 'docker compose' is available. Deploying raw stack file (env substitution may be incomplete)." -ForegroundColor Yellow
             docker stack deploy -c $stackFile $stackName
-            $renderExit = -1
-        } else {
-            if (Test-Path $envFile) {
-                docker compose -f $stackFile --env-file $envFile config | Out-File -FilePath $tempConfig -Encoding utf8
-            } else {
-                docker compose -f $stackFile config | Out-File -FilePath $tempConfig -Encoding utf8
-            }
-            $renderExit = $LASTEXITCODE
+            return
         }
+
+        if (Test-Path $envFile) {
+            docker compose -f $stackFile --env-file $envFile config | Out-File -FilePath $tempConfig -Encoding utf8
+        } else {
+            docker compose -f $stackFile config | Out-File -FilePath $tempConfig -Encoding utf8
+        }
+        $renderExit = $LASTEXITCODE
     }
 
-    if ($renderExit -eq 0) {
-        docker stack deploy -c $tempConfig $stackName
-        Remove-Item $tempConfig -ErrorAction SilentlyContinue
-    } elseif ($renderExit -ne -1) {
-        Write-Host "[ERROR] Failed to render compose config" -ForegroundColor Red
+    if ($renderExit -ne 0) {
+        Write-Host "[ERROR] Failed to render config-stack.yml via docker-compose" -ForegroundColor Red
         Remove-Item $tempConfig -ErrorAction SilentlyContinue
         return
     }
+
+    docker stack deploy -c $tempConfig $stackName
+    Remove-Item $tempConfig -ErrorAction SilentlyContinue
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host ""
@@ -137,6 +160,10 @@ function Deploy-Stack {
 }
 
 function Remove-Stack {
+    <#
+    .SYNOPSIS
+    Removes the deployed stack.
+    #>
     $config = Get-EnvConfig
     $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
     
@@ -151,6 +178,10 @@ function Remove-Stack {
 }
 
 function Show-StackStatus {
+    <#
+    .SYNOPSIS
+    Prints docker stack services for the current stack.
+    #>
     $config = Get-EnvConfig
     $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
     
@@ -165,7 +196,7 @@ function Show-StackStatus {
 function Show-ServiceLogs {
     <#
     .SYNOPSIS
-    Interactive service log viewer.
+    Interactive log viewer for selected services.
     #>
     $config = Get-EnvConfig
     $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
@@ -175,7 +206,7 @@ function Show-ServiceLogs {
     Write-Host "2) check" -ForegroundColor Gray
     Write-Host "3) db" -ForegroundColor Gray
     Write-Host "4) All services" -ForegroundColor Gray
-    Write-Host "" -ForegroundColor Gray
+    Write-Host ""
     
     $logChoice = Read-Host "Select (1-4)"
     
@@ -252,6 +283,10 @@ function Toggle-PhpMyAdmin {
 }
 
 function New-RequiredSecretsMenu {
+    <#
+    .SYNOPSIS
+    Interactive creator for required Docker secrets.
+    #>
     Write-Host ""
     Write-Host "Create required secrets" -ForegroundColor Cyan
     Write-Host ""
@@ -279,6 +314,10 @@ function New-RequiredSecretsMenu {
 }
 
 function New-OptionalSecretsMenu {
+    <#
+    .SYNOPSIS
+    Interactive creator for optional Docker secrets.
+    #>
     Write-Host ""
     Write-Host "Create optional secrets" -ForegroundColor Cyan
     Write-Host ""
@@ -318,7 +357,7 @@ function Show-MainMenu {
 
         $MENU_EXIT = $menuNext
 
-        Write-Host ""
+        Write-Host "" 
         Write-Host "================ Main Menu ================" -ForegroundColor Yellow
         Write-Host "" 
         Write-Host "Deployment:" -ForegroundColor Yellow
@@ -341,32 +380,26 @@ function Show-MainMenu {
         Write-Host "  $MENU_CICD) GitHub Actions CI/CD helper" -ForegroundColor Gray
         Write-Host "" 
         Write-Host "  $MENU_EXIT) Exit" -ForegroundColor Gray
-        Write-Host ""
+        Write-Host "" 
 
         $choice = Read-Host "Your choice (1-$MENU_EXIT)"
-        
+
         switch ($choice) {
             "$MENU_DEPLOY" { Deploy-Stack }
             "$MENU_REMOVE" { Remove-Stack }
             "$MENU_STATUS" { Show-StackStatus }
             "$MENU_LOGS" { Show-ServiceLogs }
-            "$MENU_SECRETS_CHECK" {
-                Test-RequiredSecrets
-                Test-OptionalSecrets
-            }
+            "$MENU_SECRETS_CHECK" { Test-RequiredSecrets; Test-OptionalSecrets }
             "$MENU_SECRETS_CREATE_REQUIRED" { New-RequiredSecretsMenu }
             "$MENU_SECRETS_FROM_FILE" { New-SecretsFromFile -SecretsFile "secrets.env" -TemplateFile "setup\secrets.env.template" | Out-Null }
             "$MENU_SECRETS_CREATE_OPTIONAL" { New-OptionalSecretsMenu }
             "$MENU_SECRETS_LIST" { Get-SecretList }
             "$MENU_TOGGLE_PHPMYADMIN" { Toggle-PhpMyAdmin }
             "$MENU_CICD" { Invoke-GitHubCICDHelper }
-            "$MENU_EXIT" {
-                Write-Host "Goodbye!" -ForegroundColor Cyan
-                exit 0
-            }
+            "$MENU_EXIT" { Write-Host "Goodbye!" -ForegroundColor Cyan; exit 0 }
             Default { Write-Host "[ERROR] Invalid selection" -ForegroundColor Yellow }
         }
     }
 }
 
-Export-ModuleMember -Function Show-MainMenu
+Export-ModuleMember -Function Get-EnvConfig, Update-EnvValue, Set-ProcessEnvFromConfig, Deploy-Stack, Remove-Stack, Show-StackStatus, Show-ServiceLogs, Toggle-PhpMyAdmin, New-RequiredSecretsMenu, New-OptionalSecretsMenu, Show-MainMenu

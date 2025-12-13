@@ -2,6 +2,13 @@
 # PowerShell module for Docker Swarm helper functions
 
 function Test-DockerSwarm {
+    <#
+    .SYNOPSIS
+    Verifies that Docker is installed, running, and Swarm mode is active.
+
+    .OUTPUTS
+    System.Boolean
+    #>
     Write-Host "Checking Docker Swarm..." -ForegroundColor Yellow
     
     try {
@@ -33,6 +40,16 @@ function Test-DockerSwarm {
 }
 
 function Test-SecretExists {
+    <#
+    .SYNOPSIS
+    Checks whether a Docker secret exists.
+
+    .PARAMETER SecretName
+    The name of the Docker secret.
+
+    .OUTPUTS
+    System.Boolean
+    #>
     param([string]$SecretName)
     
     $null = docker secret inspect $SecretName 2>&1
@@ -40,6 +57,19 @@ function Test-SecretExists {
 }
 
 function New-DockerSecret {
+    <#
+    .SYNOPSIS
+    Interactively creates a Docker secret.
+
+    .PARAMETER SecretName
+    The name of the Docker secret.
+
+    .PARAMETER Description
+    Description shown to the user in the prompt.
+
+    .OUTPUTS
+    System.Boolean
+    #>
     param(
         [string]$SecretName,
         [string]$Description
@@ -72,11 +102,22 @@ function New-DockerSecret {
 }
 
 function Get-SecretList {
+    <#
+    .SYNOPSIS
+    Lists all Docker secrets.
+    #>
     Write-Host "Current secrets:" -ForegroundColor Cyan
     docker secret ls
 }
 
 function Test-RequiredSecrets {
+    <#
+    .SYNOPSIS
+    Checks that all required secrets exist.
+
+    .OUTPUTS
+    System.Boolean
+    #>
     $allExist = $true
     $requiredSecrets = @(
         "STATECHECKER_SERVER_AUTHENTICATION_TOKEN",
@@ -99,6 +140,10 @@ function Test-RequiredSecrets {
 }
 
 function Test-OptionalSecrets {
+    <#
+    .SYNOPSIS
+    Prints the status of optional secrets.
+    #>
     $optionalSecrets = @(
         "STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN",
         "STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD",

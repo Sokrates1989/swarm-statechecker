@@ -5,6 +5,14 @@
 # Module for Docker-related helper functions for Swarm deployment
 
 check_docker_swarm() {
+    # check_docker_swarm
+    # Verifies:
+    # - Docker CLI is installed
+    # - Docker daemon is running
+    # - Docker Swarm mode is active
+    # Returns:
+    # - 0 if all checks pass
+    # - 1 otherwise
     echo "🔍 Checking Docker Swarm..."
     
     if ! command -v docker &> /dev/null; then
@@ -32,6 +40,13 @@ check_docker_swarm() {
 }
 
 check_secret_exists() {
+    # check_secret_exists
+    # Checks whether a Docker secret exists.
+    # Arguments:
+    # - $1: secret name
+    # Returns:
+    # - 0 if secret exists
+    # - 1 otherwise
     local secret_name="$1"
     if docker secret inspect "$secret_name" &> /dev/null; then
         return 0
@@ -41,6 +56,14 @@ check_secret_exists() {
 }
 
 create_secret_interactive() {
+    # create_secret_interactive
+    # Interactively prompts for a secret value and creates a Docker secret.
+    # Arguments:
+    # - $1: secret name
+    # - $2: description displayed to the user
+    # Returns:
+    # - 0 if created successfully
+    # - 1 otherwise
     local secret_name="$1"
     local description="$2"
     
@@ -68,6 +91,14 @@ create_secret_interactive() {
 }
 
 create_secret_from_file() {
+    # create_secret_from_file
+    # Creates a Docker secret from an existing file.
+    # Arguments:
+    # - $1: secret name
+    # - $2: file path
+    # Returns:
+    # - 0 if created successfully
+    # - 1 otherwise
     local secret_name="$1"
     local file_path="$2"
     
@@ -179,11 +210,18 @@ create_secrets_from_env_file() {
 }
 
 list_secrets() {
+    # list_secrets
+    # Lists all Docker secrets.
     echo "📋 Current secrets:"
     docker secret ls
 }
 
 check_required_secrets() {
+    # check_required_secrets
+    # Validates that all required secrets exist.
+    # Returns:
+    # - 0 if all required secrets exist
+    # - 1 otherwise
     local all_exist=true
     local required_secrets=(
         "STATECHECKER_SERVER_AUTHENTICATION_TOKEN"
@@ -210,6 +248,8 @@ check_required_secrets() {
 }
 
 check_optional_secrets() {
+    # check_optional_secrets
+    # Prints the status of optional (non-required) secrets.
     local optional_secrets=(
         "STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN"
         "STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD"
