@@ -56,6 +56,8 @@ if [ ! -f .env ]; then
                 done
             fi
             echo "✅ .env created from template"
+            echo ""
+
             echo "⚠️  Please edit .env with your configuration before deploying"
             echo ""
 
