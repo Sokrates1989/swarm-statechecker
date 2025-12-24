@@ -17,7 +17,10 @@ read_prompt() {
 
 load_env() {
     # load_env
-    # Loads .env into the current shell environment for ${VAR} substitution.
+    # Loads environment variables from .env into the current shell.
+    # Returns:
+    # - 0 if .env exists and was loaded
+    # - 1 if .env does not exist
     if [ -f .env ]; then
         set -a
         source .env
@@ -76,9 +79,9 @@ update_env_values() {
 
 deploy_stack() {
     # deploy_stack
-    # Deploys the stack using config-stack.yml.
+    # Deploys the Docker Swarm stack using config-stack.yml.
     # Notes:
-    # - Renders the compose file through docker-compose/docker compose to resolve ${VAR} substitutions.
+    # - Uses docker-compose config rendering so ${VAR} substitutions are resolved.
     local stack_name="${STACK_NAME:-statechecker-server}"
     
     echo "🚀 Deploying stack: $stack_name"
@@ -168,6 +171,8 @@ _wait_for_stack_removal() {
 }
 
 remove_stack() {
+    # remove_stack
+    # Removes the Docker Swarm stack.
     load_env
     local stack_name="${STACK_NAME:-statechecker-server}"
     
@@ -182,6 +187,8 @@ remove_stack() {
 }
 
 show_stack_status() {
+    # show_stack_status
+    # Displays docker stack services for the current stack.
     load_env
     local stack_name="${STACK_NAME:-statechecker-server}"
     
@@ -192,9 +199,7 @@ show_stack_status() {
 
 show_stack_logs() {
     # show_stack_logs
-    # Interactive service log viewer.
-    # Notes:
-    # - The "All services" option enumerates services in the stack namespace.
+    # Interactive selection of which service logs to follow.
     load_env
     local stack_name="${STACK_NAME:-statechecker-server}"
     
@@ -238,6 +243,9 @@ show_stack_logs() {
 }
 
 toggle_phpmyadmin() {
+    # toggle_phpmyadmin
+    # Toggles the phpMyAdmin service replica count between 0 and 1 and persists
+    # PHPMYADMIN_REPLICAS in .env.
     load_env
     local stack_name="${STACK_NAME:-statechecker-server}"
 
@@ -283,6 +291,8 @@ toggle_phpmyadmin() {
 }
 
 create_required_secrets_menu() {
+    # create_required_secrets_menu
+    # Interactive creator for required Docker secrets.
     echo ""
     echo "🔐 Create required secrets"
     echo ""
@@ -310,6 +320,8 @@ create_required_secrets_menu() {
 }
 
 create_optional_secrets_menu() {
+    # create_optional_secrets_menu
+    # Interactive creator for optional Docker secrets.
     echo ""
     echo "🔐 Create optional secrets"
     echo ""
@@ -337,9 +349,11 @@ create_optional_secrets_menu() {
 }
 
 show_main_menu() {
-    local choice
+     # show_main_menu
+     # Main interactive menu loop.
+     local choice
      
-    while true; do
+     while true; do
         local MENU_NEXT=1
         local MENU_DEPLOY=$MENU_NEXT; MENU_NEXT=$((MENU_NEXT+1))
         local MENU_REMOVE=$MENU_NEXT; MENU_NEXT=$((MENU_NEXT+1))
