@@ -4,6 +4,17 @@
 #
 # Module for handling menu actions in quick-start script
 
+read_prompt() {
+    local prompt="$1"
+    local var_name="$2"
+
+    if [[ -r /dev/tty ]]; then
+        read -r -p "$prompt" "$var_name" < /dev/tty
+    else
+        read -r -p "$prompt" "$var_name"
+    fi
+}
+
 load_env() {
     # load_env
     # Loads .env into the current shell environment for ${VAR} substitution.
@@ -194,7 +205,7 @@ show_stack_logs() {
     echo "4) All services"
     echo ""
     
-    read -p "Select (1-4): " log_choice
+    read_prompt "Select (1-4): " log_choice
     
     case $log_choice in
         1)
@@ -277,21 +288,21 @@ create_required_secrets_menu() {
     echo ""
     
     if ! check_secret_exists "STATECHECKER_SERVER_AUTHENTICATION_TOKEN"; then
-        read -p "Create STATECHECKER_SERVER_AUTHENTICATION_TOKEN? (Y/n): " create_auth
+        read_prompt "Create STATECHECKER_SERVER_AUTHENTICATION_TOKEN? (Y/n): " create_auth
         if [[ ! "$create_auth" =~ ^[Nn]$ ]]; then
             create_secret_interactive "STATECHECKER_SERVER_AUTHENTICATION_TOKEN" "API authentication token"
         fi
     fi
     
     if ! check_secret_exists "STATECHECKER_SERVER_DB_ROOT_USER_PW"; then
-        read -p "Create STATECHECKER_SERVER_DB_ROOT_USER_PW? (Y/n): " create_root
+        read_prompt "Create STATECHECKER_SERVER_DB_ROOT_USER_PW? (Y/n): " create_root
         if [[ ! "$create_root" =~ ^[Nn]$ ]]; then
             create_secret_interactive "STATECHECKER_SERVER_DB_ROOT_USER_PW" "MySQL root password"
         fi
     fi
     
     if ! check_secret_exists "STATECHECKER_SERVER_DB_USER_PW"; then
-        read -p "Create STATECHECKER_SERVER_DB_USER_PW? (Y/n): " create_user
+        read_prompt "Create STATECHECKER_SERVER_DB_USER_PW? (Y/n): " create_user
         if [[ ! "$create_user" =~ ^[Nn]$ ]]; then
             create_secret_interactive "STATECHECKER_SERVER_DB_USER_PW" "MySQL user password"
         fi
@@ -303,20 +314,20 @@ create_optional_secrets_menu() {
     echo "🔐 Create optional secrets"
     echo ""
     
-    read -p "Create Telegram bot token secret? (y/N): " create_telegram
+    read_prompt "Create Telegram bot token secret? (y/N): " create_telegram
     if [[ "$create_telegram" =~ ^[Yy]$ ]]; then
         create_secret_interactive "STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN" "Telegram bot token"
     fi
     
-    read -p "Create Email password secret? (y/N): " create_email
+    read_prompt "Create Email password secret? (y/N): " create_email
     if [[ "$create_email" =~ ^[Yy]$ ]]; then
         create_secret_interactive "STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD" "Email SMTP password"
     fi
     
-    read -p "Create Google Drive service account secret? (y/N): " create_gdrive
+    read_prompt "Create Google Drive service account secret? (y/N): " create_gdrive
     if [[ "$create_gdrive" =~ ^[Yy]$ ]]; then
         echo "For Google Drive, you need to provide the JSON file path"
-        read -p "Path to service account JSON file: " json_path
+        read_prompt "Path to service account JSON file: " json_path
         if [ -f "$json_path" ]; then
             create_secret_from_file "STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON" "$json_path"
         else
@@ -372,7 +383,7 @@ show_main_menu() {
         echo "  ${MENU_EXIT}) Exit"
          echo ""
          
-        read -p "Your choice (1-${MENU_EXIT}): " choice
+        read_prompt "Your choice (1-${MENU_EXIT}): " choice
          
          case $choice in
             ${MENU_DEPLOY})
