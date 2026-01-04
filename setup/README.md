@@ -2,6 +2,25 @@
 
 This directory contains setup helpers, templates, and the setup wizard for Swarm Statechecker deployment.
 
+<br>
+
+## Table of Contents
+
+1. [📖 Overview](#overview)
+2. [🧑‍💻 Usage](#usage)
+3. [🔐 Secrets](#secrets)
+4. [🚀 Summary](#summary)
+
+<br>
+
+# 📖 Overview
+
+This setup wizard helps you:
+
+- Create required Docker secrets
+- Create/update `.env`
+- Deploy the swarm stack
+
 ## 📁 Structure
 
 ```
@@ -14,6 +33,8 @@ setup/
 ```
 
 ## 🚀 Quick Start
+
+# 🧑‍💻 Usage
 
 Run the setup wizard from the repository root:
 
@@ -33,6 +54,8 @@ The setup wizard will guide you through:
 3. Deploying the stack
 
 ## 🔐 Required Secrets
+
+# 🔐 Secrets
 
 Before deploying, create these secrets:
 
@@ -62,3 +85,19 @@ The stack deploys:
 - **db** - MySQL 8.4 database
 - **db-migration** - Database migration runner
 - **phpmyadmin** - Database admin UI (optional, controlled by PHPMYADMIN_REPLICAS)
+
+## 🗄️ Database initialization
+
+The DB init SQL is mounted from:
+
+- `${DATA_ROOT}/install/database/state_checker.sql`
+
+MySQL only runs init SQL when `${DATA_ROOT}/db_data` is empty.
+
+<br>
+
+# 🚀 Summary
+
+✅ Run the setup wizard from the repo root (`quick-start.ps1` / `quick-start.sh`).
+
+✅ Required secrets must exist before deploying.

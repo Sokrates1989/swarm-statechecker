@@ -3,7 +3,7 @@ version: "3.9"
 services:
 
   api:
-    image: sokrates1989/statechecker-server-api-and-check:DEBUG-0.4.0
+    image: ${IMAGE_NAME}:${IMAGE_VERSION}
     environment:
       # API Authentication.
       - SERVER_AUTHENTICATION_TOKEN_FILE=/run/secrets/STATECHECKER_SERVER_AUTHENTICATION_TOKEN
@@ -43,7 +43,7 @@ services:
 
 
   check:
-    image: sokrates1989/statechecker-server-api-and-check:DEBUG-0.4.0
+    image: ${IMAGE_NAME}:${IMAGE_VERSION}
     environment:
       # Logging.
       - TIMEZONE=${TIMEZONE}
@@ -93,7 +93,7 @@ services:
 
 
   db:
-    image: mysql:8.4
+    image: mysql:8
     environment:
       - MYSQL_DATABASE=state_checker
       - MYSQL_USER=state_checker
