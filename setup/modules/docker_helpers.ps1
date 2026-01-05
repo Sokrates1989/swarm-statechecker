@@ -29,6 +29,27 @@ function Test-DockerSwarm {
 
     # Check if in swarm mode
     $swarmStatus = docker info --format '{{.Swarm.LocalNodeState}}' 2>$null
+    if ($swarmStatus -eq "error") {
+        Write-Host "[ERROR] Docker Swarm is in an ERROR state." -ForegroundColor Red
+
+        try {
+            $errLine = docker info 2>&1 | Select-String -Pattern '^\s*Error:' | Select-Object -First 1
+            if ($errLine) {
+                Write-Host ("   " + $errLine.Line.Trim()) -ForegroundColor Yellow
+            }
+        } catch {
+        }
+
+        Write-Host "" 
+        Write-Host "Common causes:" -ForegroundColor Yellow
+        Write-Host "  - Expired Swarm TLS certificates (often after a long time or incorrect system time)" -ForegroundColor Gray
+        Write-Host "" 
+        Write-Host "Suggested fixes (choose one depending on your setup):" -ForegroundColor Yellow
+        Write-Host "  - Single-node: docker swarm leave --force  (then)  docker swarm init" -ForegroundColor Gray
+        Write-Host "  - Multi-node: rotate CA and re-join nodes (docker swarm ca --rotate)" -ForegroundColor Gray
+        Write-Host "" 
+        return $false
+    }
     if ($swarmStatus -ne "active") {
         Write-Host "[ERROR] Docker is not in Swarm mode!" -ForegroundColor Red
         Write-Host "   Run 'docker swarm init' to initialize a swarm" -ForegroundColor Yellow
@@ -37,6 +58,100 @@ function Test-DockerSwarm {
 
     Write-Host "[OK] Docker Swarm is active" -ForegroundColor Green
     return $true
+}
+
+function Select-TraefikNetwork {
+    <#
+    .SYNOPSIS
+    Selects a Traefik public overlay network name with auto-detection.
+
+    .DESCRIPTION
+    Lists existing Docker overlay networks and allows selection by number or name.
+    Auto-detects common Traefik network names (traefik-public, traefik_public, traefik)
+    and uses the detected network as the recommended default.
+
+    .PARAMETER DefaultNetwork
+    Default network name used if nothing is selected.
+
+    .OUTPUTS
+    System.String
+    #>
+    param(
+        [Parameter(Mandatory = $false)][string]$DefaultNetwork = "traefik"
+    )
+
+    $preferred = @('traefik-public', 'traefik_public', 'traefik')
+    $networks = @()
+
+    try {
+        $networks = docker network ls --filter driver=overlay --format "{{.Name}}" 2>$null
+    } catch {
+        $networks = @()
+    }
+
+    $networks = @($networks | ForEach-Object { $_.ToString().Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+    if ($networks.Count -eq 0) {
+        $fallback = Read-Host "Traefik network name [$DefaultNetwork]"
+        if ([string]::IsNullOrWhiteSpace($fallback)) { return $DefaultNetwork }
+        return $fallback
+    }
+
+    $detected = ""
+    $defaultSelection = 1
+
+    foreach ($p in $preferred) {
+        $idx = 0
+        foreach ($n in $networks) {
+            if ($n -eq $p) {
+                $detected = $n
+                $defaultSelection = $idx + 1
+                break
+            }
+            $idx++
+        }
+        if ($detected) { break }
+    }
+
+    if ($detected) {
+        Write-Host "[OK] Auto-detected common Traefik network: $detected (recommended)" -ForegroundColor Green
+    }
+
+    Write-Host "" 
+    Write-Host "Select the Traefik public overlay network from the list below." -ForegroundColor Yellow
+    Write-Host "Do NOT pick an app-specific network (such as '*_backend')." -ForegroundColor Gray
+    Write-Host "0) Enter a network name manually" -ForegroundColor Gray
+
+    for ($i = 0; $i -lt $networks.Count; $i++) {
+        $n = $networks[$i]
+        $nr = $i + 1
+        if ($detected -and $n -eq $detected) {
+            Write-Host ("{0}) {1} (recommended)" -f $nr, $n) -ForegroundColor Cyan
+        } else {
+            Write-Host ("{0}) {1}" -f $nr, $n) -ForegroundColor Gray
+        }
+    }
+
+    Write-Host "" 
+    $sel = Read-Host "Traefik network (number or name) [$defaultSelection]"
+    if ([string]::IsNullOrWhiteSpace($sel)) { $sel = $defaultSelection.ToString() }
+
+    if ($sel -match '^[0-9]+$') {
+        $nSel = 0
+        [int]::TryParse($sel, [ref]$nSel) | Out-Null
+
+        if ($nSel -eq 0) {
+            $name = Read-Host "Network name [$DefaultNetwork]"
+            if ([string]::IsNullOrWhiteSpace($name)) { return $DefaultNetwork }
+            return $name
+        }
+
+        if ($nSel -ge 1 -and $nSel -le $networks.Count) {
+            return $networks[$nSel - 1]
+        }
+    }
+
+    return $sel
 }
 
 function Test-SecretExists {
@@ -220,4 +335,6 @@ function New-SecretsFromFile {
     return (Test-RequiredSecrets)
 }
 
-Export-ModuleMember -Function Test-DockerSwarm, Test-SecretExists, New-DockerSecret, New-SecretsFromFile, Get-SecretList, Test-RequiredSecrets, Test-OptionalSecrets
+if ($null -ne $ExecutionContext.SessionState.Module) {
+    Export-ModuleMember -Function Test-DockerSwarm, Test-SecretExists, New-DockerSecret, New-SecretsFromFile, Get-SecretList, Test-RequiredSecrets, Test-OptionalSecrets
+}

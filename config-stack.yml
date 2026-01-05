@@ -27,6 +27,12 @@ services:
       - ${DATA_ROOT}/logs/api:/code/logs
     ports:
       - "${API_PORT}:${API_PORT}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:${API_PORT}/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     deploy:
       labels:
         # Traefik.
@@ -38,7 +44,7 @@ services:
         - traefik.http.routers.statechecker-server-api.tls=true
         - traefik.http.routers.statechecker-server-api.tls.certresolver=le
       mode: replicated
-      replicas: 1
+      replicas: ${API_REPLICAS:-1}
     command: ["uvicorn", "main_api_startpoint:app", "--host", "0.0.0.0", "--port", "${API_PORT}"]
 
 
@@ -88,7 +94,7 @@ services:
       - ${DATA_ROOT}/logs/check:/code/logs
     deploy:
       mode: replicated
-      replicas: 1
+      replicas: ${CHECK_REPLICAS:-1}
     command: ["python", "src/check_tools.py"]
 
 
@@ -116,6 +122,7 @@ services:
     environment:
       - MYSQL_DATABASE=state_checker
       - MYSQL_USER=state_checker
+      - MYSQL_HOST=${STACK_NAME}_db
     secrets:
       - STATECHECKER_SERVER_DB_USER_PW
     networks:
@@ -123,6 +130,9 @@ services:
     volumes:
       - ${DATA_ROOT}/install/database/migrations:/scripts
     entrypoint: ["/bin/bash", "/scripts/run_migrations.sh"]
+    deploy:
+      restart_policy:
+        condition: none
 
   phpmyadmin:
     image: phpmyadmin:5.2
@@ -142,6 +152,32 @@ services:
         - traefik.http.routers.statechecker-server-phpmyadmin.tls.certresolver=le
       mode: replicated
       replicas: ${PHPMYADMIN_REPLICAS}
+
+
+  web:
+    image: ${WEB_IMAGE_NAME}:${WEB_IMAGE_VERSION}
+    environment:
+      - API_UPSTREAM=${STACK_NAME}_api:${API_PORT}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - state-checker-net
+      - traefik
+    deploy:
+      labels:
+        - traefik.enable=true
+        - traefik.constraint-label=traefik-public
+        - traefik.http.services.statechecker-server-web.loadbalancer.server.port=80
+        - traefik.http.routers.statechecker-server-web.rule=Host(`${WEB_URL}`)
+        - traefik.http.routers.statechecker-server-web.entrypoints=https,http,web
+        - traefik.http.routers.statechecker-server-web.tls=true
+        - traefik.http.routers.statechecker-server-web.tls.certresolver=le
+      mode: replicated
+      replicas: ${WEB_REPLICAS}
 
     
 networks:

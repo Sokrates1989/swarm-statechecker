@@ -15,6 +15,337 @@ read_prompt() {
     fi
 }
 
+check_stack_health() {
+    # check_stack_health
+    # Runs a health check using setup/modules/health-check.sh.
+    load_env
+    local stack_name="${STACK_NAME:-statechecker-server}"
+    local proxy_type="${PROXY_TYPE:-traefik}"
+
+    local wait_seconds="${HEALTH_WAIT_SECONDS:-10}"
+    local logs_since="${LOGS_SINCE:-10m}"
+    local logs_tail="${LOGS_TAIL:-200}"
+
+    if command -v check_deployment_health >/dev/null 2>&1; then
+        check_deployment_health "$stack_name" "$proxy_type" "$wait_seconds" "$logs_since" "$logs_tail"
+    else
+        echo "❌ health-check.sh is not loaded (check_deployment_health missing)"
+        return 1
+    fi
+}
+
+update_images_menu() {
+    # update_images_menu
+    # Updates Swarm service images for api/check and/or web.
+    load_env
+    local stack_name="${STACK_NAME:-statechecker-server}"
+
+    echo ""
+    echo "[UPDATE] Update Image Version"
+    echo ""
+    echo "1) API/CHECK image (${IMAGE_NAME:-}:${IMAGE_VERSION:-})"
+    echo "2) WEB image (${WEB_IMAGE_NAME:-}:${WEB_IMAGE_VERSION:-})"
+    echo "3) Back"
+    echo ""
+    read_prompt "Your choice (1-3): " img_choice
+
+    case "$img_choice" in
+        1)
+            local current_tag="${IMAGE_VERSION:-latest}"
+            read_prompt "Enter new API/CHECK image tag [$current_tag]: " new_tag
+            new_tag="${new_tag:-$current_tag}"
+
+            echo ""
+            echo "Pulling: ${IMAGE_NAME}:${new_tag}"
+            docker pull "${IMAGE_NAME}:${new_tag}" || true
+
+            echo ""
+            echo "Updating services..."
+            docker service update --image "${IMAGE_NAME}:${new_tag}" "${stack_name}_api" || true
+            docker service update --image "${IMAGE_NAME}:${new_tag}" "${stack_name}_check" || true
+
+            if [ -f .env ]; then
+                update_env_values ".env" "IMAGE_VERSION" "$new_tag"
+            fi
+
+            echo ""
+            echo "✅ Update initiated. Monitor with: docker stack services $stack_name"
+            ;;
+        2)
+            local current_tag="${WEB_IMAGE_VERSION:-latest}"
+            read_prompt "Enter new WEB image tag [$current_tag]: " new_tag
+            new_tag="${new_tag:-$current_tag}"
+
+            echo ""
+            echo "Pulling: ${WEB_IMAGE_NAME}:${new_tag}"
+            docker pull "${WEB_IMAGE_NAME}:${new_tag}" || true
+
+            echo ""
+            echo "Updating service..."
+            docker service update --image "${WEB_IMAGE_NAME}:${new_tag}" "${stack_name}_web" || true
+
+            if [ -f .env ]; then
+                update_env_values ".env" "WEB_IMAGE_VERSION" "$new_tag"
+            fi
+
+            echo ""
+            echo "✅ Update initiated. Monitor with: docker stack services $stack_name"
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+scale_services_menu() {
+    # scale_services_menu
+    # Scales selected stack services and persists replica env vars.
+    load_env
+    local stack_name="${STACK_NAME:-statechecker-server}"
+
+    echo ""
+    echo "[SCALE] Scale Services"
+    echo ""
+    echo "1) api"
+    echo "2) check"
+    echo "3) web"
+    echo "4) phpmyadmin"
+    echo "5) Back"
+    echo ""
+    read_prompt "Your choice (1-5): " svc_choice
+
+    if [ "$svc_choice" = "5" ]; then
+        return 0
+    fi
+
+    read_prompt "Number of replicas: " replicas
+    if [ -z "$replicas" ]; then
+        echo "❌ Replicas cannot be empty"
+        return 1
+    fi
+
+    case "$svc_choice" in
+        1)
+            docker service scale "${stack_name}_api=${replicas}" || true
+            if [ -f .env ]; then
+                update_env_values ".env" "API_REPLICAS" "$replicas"
+            fi
+            ;;
+        2)
+            docker service scale "${stack_name}_check=${replicas}" || true
+            if [ -f .env ]; then
+                update_env_values ".env" "CHECK_REPLICAS" "$replicas"
+            fi
+            ;;
+        3)
+            docker service scale "${stack_name}_web=${replicas}" || true
+            if [ -f .env ]; then
+                update_env_values ".env" "WEB_REPLICAS" "$replicas"
+            fi
+            ;;
+        4)
+            docker service scale "${stack_name}_phpmyadmin=${replicas}" || true
+            if [ -f .env ]; then
+                update_env_values ".env" "PHPMYADMIN_REPLICAS" "$replicas"
+            fi
+            ;;
+        *)
+            echo "❌ Invalid selection"
+            ;;
+    esac
+}
+
+_apply_no_proxy_transformations() {
+    # _apply_no_proxy_transformations
+    # Modifies a rendered stack file for "no proxy" deployments.
+    #
+    # Behavior:
+    # - Removes Traefik network attachments and Traefik labels.
+    # - Removes the external Traefik network definition.
+    # - Exposes direct ingress ports for web + phpMyAdmin.
+    #
+    # Arguments:
+    # - $1: rendered stack file path
+    local stack_file="$1"
+
+    if [ -z "$stack_file" ] || [ ! -f "$stack_file" ]; then
+        echo "❌ Cannot apply no-proxy transformations: stack file missing"
+        return 1
+    fi
+
+    local web_port="${WEB_PORT:-8080}"
+    local pma_port="${PHPMYADMIN_PORT:-8081}"
+
+    local tmp_file
+    tmp_file="${stack_file}.tmp"
+
+    awk -v web_port="$web_port" -v pma_port="$pma_port" '
+        BEGIN {
+            section=""
+            current_service=""
+            web_has_ports=0
+            pma_has_ports=0
+            skip_traefik_net=0
+            in_labels=0
+            labels_indent=0
+            labels_count=0
+            kept_labels_count=0
+        }
+
+        function maybe_inject_ports_before_leave() {
+            if (section=="services" && current_service=="web" && web_has_ports==0) {
+                print "    ports:"
+                print "      - \"" web_port ":80\""
+                web_has_ports=1
+            }
+            if (section=="services" && current_service=="phpmyadmin" && pma_has_ports==0) {
+                print "    ports:"
+                print "      - \"" pma_port ":80\""
+                pma_has_ports=1
+            }
+        }
+
+        {
+            line=$0
+
+            if (in_labels==1) {
+                # End of labels block when indentation decreases.
+                if (match(line, /^[[:space:]]*/)) {
+                    current_indent=RLENGTH
+                } else {
+                    current_indent=0
+                }
+
+                if (current_indent <= labels_indent && line ~ /^[[:space:]]*[^[:space:]]/) {
+                    if (kept_labels_count > 0) {
+                        print labels_header
+                        for (i=1; i<=kept_labels_count; i++) {
+                            print kept_labels[i]
+                        }
+                    }
+                    in_labels=0
+                    labels_indent=0
+                    labels_count=0
+                    kept_labels_count=0
+                } else {
+                    labels_count++
+                    if (line !~ /^[[:space:]]*-[[:space:]]*traefik\./) {
+                        kept_labels_count++
+                        kept_labels[kept_labels_count]=line
+                    }
+                    next
+                }
+            }
+
+            if (skip_traefik_net==1) {
+                if (line ~ /^  [^[:space:]]/) {
+                    skip_traefik_net=0
+                } else {
+                    next
+                }
+            }
+
+            if (line ~ /^services:[[:space:]]*$/) {
+                section="services"
+                current_service=""
+                print line
+                next
+            }
+
+            if (line ~ /^networks:[[:space:]]*$/) {
+                maybe_inject_ports_before_leave()
+                section="networks"
+                current_service=""
+                print line
+                next
+            }
+
+            if (line ~ /^secrets:[[:space:]]*$/) {
+                maybe_inject_ports_before_leave()
+                section="secrets"
+                current_service=""
+                print line
+                next
+            }
+
+            if (section=="networks" && line ~ /^  traefik:[[:space:]]*$/) {
+                skip_traefik_net=1
+                next
+            }
+
+            if (line ~ /^[[:space:]]+-[[:space:]]+traefik[[:space:]]*$/) {
+                next
+            }
+
+            if (line ~ /^[[:space:]]+-[[:space:]]+traefik\./) {
+                next
+            }
+
+            if (line ~ /^[[:space:]]+labels:[[:space:]]*$/) {
+                in_labels=1
+                labels_header=line
+                if (match(line, /^[[:space:]]*/)) {
+                    labels_indent=RLENGTH
+                } else {
+                    labels_indent=0
+                }
+                labels_count=0
+                kept_labels_count=0
+                next
+            }
+
+            if (section=="services" && line ~ /^  [A-Za-z0-9_.-]+:[[:space:]]*$/) {
+                maybe_inject_ports_before_leave()
+
+                current_service=line
+                sub(/^  /, "", current_service)
+                sub(/:[[:space:]]*$/, "", current_service)
+
+                web_has_ports=0
+                pma_has_ports=0
+
+                print line
+                next
+            }
+
+            if (section=="services" && current_service=="web" && line ~ /^    ports:[[:space:]]*$/) {
+                web_has_ports=1
+            }
+            if (section=="services" && current_service=="phpmyadmin" && line ~ /^    ports:[[:space:]]*$/) {
+                pma_has_ports=1
+            }
+
+            if (section=="services" && current_service=="web" && web_has_ports==0 && line ~ /^    deploy:[[:space:]]*$/) {
+                print "    ports:"
+                print "      - \"" web_port ":80\""
+                web_has_ports=1
+            }
+            if (section=="services" && current_service=="phpmyadmin" && pma_has_ports==0 && line ~ /^    deploy:[[:space:]]*$/) {
+                print "    ports:"
+                print "      - \"" pma_port ":80\""
+                pma_has_ports=1
+            }
+
+            print line
+        }
+
+        END {
+            if (in_labels==1) {
+                if (kept_labels_count > 0) {
+                    print labels_header
+                    for (i=1; i<=kept_labels_count; i++) {
+                        print kept_labels[i]
+                    }
+                }
+            }
+            maybe_inject_ports_before_leave()
+        }
+    ' "$stack_file" > "$tmp_file"
+
+    mv "$tmp_file" "$stack_file"
+    return 0
+}
+
 load_env() {
     # load_env
     # Loads environment variables from .env into the current shell.
@@ -110,9 +441,29 @@ deploy_stack() {
         compose_env_opt=(--env-file .env)
     fi
 
-    docker stack deploy -c <("${compose_cmd[@]}" -f config-stack.yml "${compose_env_opt[@]}" config) "$stack_name"
+    local temp_config
+    temp_config=".stack-deploy-temp.yml"
+
+    "${compose_cmd[@]}" -f config-stack.yml "${compose_env_opt[@]}" config > "$temp_config"
+    if [ $? -ne 0 ]; then
+        echo "❌ Failed to render config-stack.yml via docker compose"
+        rm -f "$temp_config" 2>/dev/null || true
+        return 1
+    fi
+
+    if [ "${PROXY_TYPE:-traefik}" = "none" ]; then
+        echo "[INFO] PROXY_TYPE=none: deploying without Traefik (direct ports)"
+        _apply_no_proxy_transformations "$temp_config" || {
+            rm -f "$temp_config" 2>/dev/null || true
+            return 1
+        }
+    fi
+
+    docker stack deploy -c "$temp_config" "$stack_name"
+    local deploy_rc=$?
+    rm -f "$temp_config" 2>/dev/null || true
     
-    if [ $? -eq 0 ]; then
+    if [ $deploy_rc -eq 0 ]; then
         echo ""
         echo "✅ Stack deployed: $stack_name"
         echo ""
@@ -206,11 +557,12 @@ show_stack_logs() {
     echo "Which service logs do you want to view?"
     echo "1) api"
     echo "2) check"
-    echo "3) db"
-    echo "4) All services"
+    echo "3) web"
+    echo "4) db"
+    echo "5) All services"
     echo ""
     
-    read_prompt "Select (1-4): " log_choice
+    read_prompt "Select (1-5): " log_choice
     
     case $log_choice in
         1)
@@ -220,9 +572,12 @@ show_stack_logs() {
             docker service logs "${stack_name}_check" -f
             ;;
         3)
-            docker service logs "${stack_name}_db" -f
+            docker service logs "${stack_name}_web" -f
             ;;
         4)
+            docker service logs "${stack_name}_db" -f
+            ;;
+        5)
             local services
             services=$(docker service ls --filter "label=com.docker.stack.namespace=${stack_name}" --format '{{.Name}}' 2>/dev/null)
             if [ -z "$services" ]; then
@@ -276,16 +631,22 @@ toggle_phpmyadmin() {
     if [ "$new_replicas" -eq 0 ] 2>/dev/null; then
         echo "phpMyAdmin is now DISABLED."
     else
-        if [ -f .env ]; then
-            local url
-            url=$(grep '^PHPMYADMIN_URL=' .env 2>/dev/null | cut -d'=' -f2 | tr -d ' "')
-            if [ -n "$url" ]; then
-                echo "phpMyAdmin is now ENABLED. Access it via https://$url"
+        if [ "${PROXY_TYPE:-traefik}" = "none" ]; then
+            local pma_port
+            pma_port="${PHPMYADMIN_PORT:-8081}"
+            echo "phpMyAdmin is now ENABLED. Access it via http://localhost:${pma_port}"
+        else
+            if [ -f .env ]; then
+                local url
+                url=$(grep '^PHPMYADMIN_URL=' .env 2>/dev/null | cut -d'=' -f2 | tr -d ' "')
+                if [ -n "$url" ]; then
+                    echo "phpMyAdmin is now ENABLED. Access it via https://$url"
+                else
+                    echo "phpMyAdmin is now ENABLED."
+                fi
             else
                 echo "phpMyAdmin is now ENABLED."
             fi
-        else
-            echo "phpMyAdmin is now ENABLED."
         fi
     fi
 }
@@ -358,7 +719,11 @@ show_main_menu() {
         local MENU_DEPLOY=$MENU_NEXT; MENU_NEXT=$((MENU_NEXT+1))
         local MENU_REMOVE=$MENU_NEXT; MENU_NEXT=$((MENU_NEXT+1))
         local MENU_STATUS=$MENU_NEXT; MENU_NEXT=$((MENU_NEXT+1))
+        local MENU_HEALTH=$MENU_NEXT; MENU_NEXT=$((MENU_NEXT+1))
         local MENU_LOGS=$MENU_NEXT; MENU_NEXT=$((MENU_NEXT+1))
+
+        local MENU_UPDATE_IMAGE=$MENU_NEXT; MENU_NEXT=$((MENU_NEXT+1))
+        local MENU_SCALE=$MENU_NEXT; MENU_NEXT=$((MENU_NEXT+1))
 
         local MENU_SECRETS_CHECK=$MENU_NEXT; MENU_NEXT=$((MENU_NEXT+1))
         local MENU_SECRETS_CREATE_REQUIRED=$MENU_NEXT; MENU_NEXT=$((MENU_NEXT+1))
@@ -379,7 +744,13 @@ show_main_menu() {
         echo "  ${MENU_DEPLOY}) Deploy stack"
         echo "  ${MENU_REMOVE}) Remove stack"
         echo "  ${MENU_STATUS}) Show stack status"
+        echo "  ${MENU_HEALTH}) Health check"
         echo "  ${MENU_LOGS}) View service logs"
+         echo ""
+         echo "Management:"
+        echo "  ${MENU_UPDATE_IMAGE}) Update image version"
+        echo "  ${MENU_SCALE}) Scale services"
+        echo "  ${MENU_TOGGLE_PHPMYADMIN}) Toggle phpMyAdmin (enable/disable)"
          echo ""
          echo "Secrets:"
         echo "  ${MENU_SECRETS_CHECK}) Check required secrets"
@@ -388,8 +759,6 @@ show_main_menu() {
         echo "  ${MENU_SECRETS_CREATE_OPTIONAL}) Create optional secrets (Telegram, Email, Google Drive)"
         echo "  ${MENU_SECRETS_LIST}) List all secrets"
          echo ""
-         echo "Management:"
-        echo "  ${MENU_TOGGLE_PHPMYADMIN}) Toggle phpMyAdmin (enable/disable)"
          echo ""
          echo "CI/CD:"
         echo "  ${MENU_CICD}) GitHub Actions CI/CD helper"
@@ -401,16 +770,36 @@ show_main_menu() {
          
          case $choice in
             ${MENU_DEPLOY})
-                 deploy_stack
-                 ;;
+                echo "[DEPLOY] Deploying stack..."
+                echo ""
+                echo "[WARN] Make sure you have:"
+                echo "   - Created Docker secrets"
+                if [ "${PROXY_TYPE:-traefik}" = "traefik" ]; then
+                    echo "   - Configured your domain DNS (Traefik mode)"
+                    echo "   - Set API_URL / PHPMYADMIN_URL / WEB_URL to real hostnames"
+                else
+                    echo "   - Set WEB_PORT / PHPMYADMIN_PORT for localhost access (no-proxy mode)"
+                fi
+                echo ""
+                deploy_stack
+                ;;
             ${MENU_REMOVE})
                  remove_stack
                  ;;
             ${MENU_STATUS})
                  show_stack_status
                  ;;
+            ${MENU_HEALTH})
+                 check_stack_health
+                 ;;
             ${MENU_LOGS})
                  show_stack_logs
+                 ;;
+            ${MENU_UPDATE_IMAGE})
+                 update_images_menu
+                 ;;
+            ${MENU_SCALE})
+                 scale_services_menu
                  ;;
             ${MENU_SECRETS_CHECK})
                  check_required_secrets

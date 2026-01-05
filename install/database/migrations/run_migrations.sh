@@ -11,5 +11,5 @@ fi
 # Apply migrations.
 for f in /scripts/*.sql; do
     echo "Applying migration $f"
-    mysql -h db -u "$MYSQL_USER" -p"$STATECHECKER_SERVER_DB_USER_PW" "$MYSQL_DATABASE" < "$f"
+    mysql -h "${MYSQL_HOST:-db}" -u "$MYSQL_USER" -p"$STATECHECKER_SERVER_DB_USER_PW" "$MYSQL_DATABASE" < "$f"
 done

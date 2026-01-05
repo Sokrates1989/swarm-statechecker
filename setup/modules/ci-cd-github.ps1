@@ -116,7 +116,7 @@ function Show-GitHubActionsRequiredConfig {
 }
 
 function Invoke-GitHubCICDHelper {
-    Write-Host "🔧 GitHub Actions CI/CD Helper" -ForegroundColor Cyan
+    Write-Host "GitHub Actions CI/CD Helper" -ForegroundColor Cyan
     Write-Host "==============================" -ForegroundColor Cyan
     Write-Host "" 
 
@@ -176,7 +176,7 @@ function Invoke-GitHubCICDHelper {
     $defaultSshPort = "22"
 
     if (-not (Test-Path $envFile)) {
-        Write-Host "⚠️  .env not found in this folder. That's ok for CI/CD guidance, but STACK_NAME/IMAGE_NAME cannot be auto-detected." -ForegroundColor Yellow
+        Write-Host "[WARN] .env not found in this folder. That's ok for CI/CD guidance, but STACK_NAME/IMAGE_NAME cannot be auto-detected." -ForegroundColor Yellow
     }
 
     if ($envChoice -eq "1" -or $envChoice -eq "3") {
@@ -209,7 +209,7 @@ function Invoke-GitHubCICDHelper {
 
     Write-Host "" 
     Write-Host "Server-side checklist (run on the target server):" -ForegroundColor Yellow
-    Write-Host "  - Ensure the SSH user is allowed to run Docker (usually in the 'docker' group)" -ForegroundColor Gray
+    Write-Host "  - Ensure the SSH user is allowed to run Docker (usually in the docker group)" -ForegroundColor Gray
     Write-Host "  - Ensure the SSH user can write to DEPLOY_PATH (so the workflow can update .env)" -ForegroundColor Gray
     Write-Host "" 
     Write-Host "Example commands (adjust to your setup):" -ForegroundColor Yellow
@@ -218,4 +218,9 @@ function Invoke-GitHubCICDHelper {
     Write-Host "" 
 }
 
-Export-ModuleMember -Function Invoke-GitHubCICDHelper
+try {
+    if ($null -ne $ExecutionContext.SessionState.Module) {
+        Export-ModuleMember -Function Invoke-GitHubCICDHelper
+    }
+} catch {
+}

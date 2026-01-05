@@ -12,14 +12,29 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SETUP_DIR="${SCRIPT_DIR}/setup"
 
+cd "$SCRIPT_DIR"
+
 # Source modules
 source "${SETUP_DIR}/modules/docker_helpers.sh"
 source "${SETUP_DIR}/modules/ci-cd-github.sh"
+source "${SETUP_DIR}/modules/health-check.sh"
 source "${SETUP_DIR}/modules/menu_handlers.sh"
 
 echo "🔍 Swarm Statechecker - Quick Start"
 echo "===================================="
 echo ""
+
+# Offer wizard-driven setup (recommended)
+if [ ! -f .setup-complete ]; then
+    echo "⚠️  Setup wizard has not been completed (.setup-complete missing)"
+    if [ -f "$SETUP_DIR/setup-wizard.sh" ]; then
+        read -p "Run setup wizard now? (Y/n): " run_wizard
+        if [[ ! "$run_wizard" =~ ^[Nn]$ ]]; then
+            bash "$SETUP_DIR/setup-wizard.sh"
+            echo ""
+        fi
+    fi
+fi
 
 # Docker Swarm availability check
 if ! check_docker_swarm; then
