@@ -19,6 +19,7 @@ source "${SETUP_DIR}/modules/docker_helpers.sh"
 source "${SETUP_DIR}/modules/ci-cd-github.sh"
 source "${SETUP_DIR}/modules/health-check.sh"
 source "${SETUP_DIR}/modules/menu_handlers.sh"
+source "${SETUP_DIR}/modules/wizard.sh"
 
 echo "🔍 Swarm Statechecker - Quick Start"
 echo "===================================="
@@ -27,11 +28,42 @@ echo ""
 # Offer wizard-driven setup (recommended)
 if [ ! -f .setup-complete ]; then
     echo "⚠️  Setup wizard has not been completed (.setup-complete missing)"
-    if [ -f "$SETUP_DIR/setup-wizard.sh" ]; then
-        read -p "Run setup wizard now? (Y/n): " run_wizard
-        if [[ ! "$run_wizard" =~ ^[Nn]$ ]]; then
-            bash "$SETUP_DIR/setup-wizard.sh"
-            echo ""
+    echo "How do you want to set up configuration?"
+    echo "1) Edit .env + secrets.env (copy from templates)"
+    echo "2) Run guided setup wizard (recommended)"
+    echo ""
+    read -p "Your choice (1-2) [2]: " setup_mode
+    setup_mode="${setup_mode:-2}"
+
+    if [ "$setup_mode" = "1" ]; then
+        if [ -z "${WIZARD_EDITOR:-}" ]; then
+            wizard_choose_editor || exit 1
+        fi
+
+        if [ ! -f .env ] && [ -f setup/.env.template ]; then
+            cp setup/.env.template .env
+        fi
+        if [ -f .env ]; then
+            wizard_edit_file "$(pwd)/.env" "$WIZARD_EDITOR"
+        fi
+
+        if [ ! -f secrets.env ] && [ -f setup/secrets.env.template ]; then
+            cp setup/secrets.env.template secrets.env
+        fi
+        if [ -f secrets.env ]; then
+            wizard_edit_file "$(pwd)/secrets.env" "$WIZARD_EDITOR"
+        fi
+
+        echo ""
+        echo "[OK] Files prepared. You can now re-run ./quick-start.sh or run the setup wizard later."
+        echo ""
+    else
+        if [ -f "$SETUP_DIR/setup-wizard.sh" ]; then
+            read -p "Run setup wizard now? (Y/n): " run_wizard
+            if [[ ! "$run_wizard" =~ ^[Nn]$ ]]; then
+                bash "$SETUP_DIR/setup-wizard.sh"
+                echo ""
+            fi
         fi
     fi
 fi

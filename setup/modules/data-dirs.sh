@@ -19,6 +19,10 @@ prepare_data_root() {
     local data_root="$1"
     local project_root="$2"
 
+    local normalized_data_root normalized_project_root
+    normalized_data_root="${data_root%/}"
+    normalized_project_root="${project_root%/}"
+
     if [ -z "$data_root" ]; then
         echo "❌ DATA_ROOT cannot be empty"
         return 1
@@ -27,27 +31,40 @@ prepare_data_root() {
     echo ""
     echo "[DATA] Preparing DATA_ROOT: $data_root"
 
+    local schema_src schema_dest
+    schema_src="$normalized_project_root/install/database/state_checker.sql"
+    schema_dest="$normalized_data_root/install/database/state_checker.sql"
+
+    local same_as_project_root=false
+    if [ "$normalized_data_root" = "$normalized_project_root" ] || [ "$schema_src" = "$schema_dest" ]; then
+        same_as_project_root=true
+    fi
+
     # Parity with swarm-ananda: delete existing init files but keep db_data
-    if [ -f "$data_root/install/database/state_checker.sql" ]; then
+    if [ "$same_as_project_root" = false ] && [ -f "$schema_dest" ]; then
         echo "[INFO] Removing old database init file..."
-        rm -f "$data_root/install/database/state_checker.sql"
+        rm -f "$schema_dest"
     fi
 
     mkdir -p "$data_root/logs/api" "$data_root/logs/check" "$data_root/db_data" "$data_root/install/database/migrations"
 
-    if [ ! -f "$project_root/install/database/state_checker.sql" ]; then
-        echo "❌ Missing schema file: $project_root/install/database/state_checker.sql"
+    if [ ! -f "$schema_src" ]; then
+        echo "❌ Missing schema file: $schema_src"
         return 1
     fi
 
-    cp "$project_root/install/database/state_checker.sql" "$data_root/install/database/state_checker.sql"
+    if [ "$same_as_project_root" = true ]; then
+        echo "[INFO] DATA_ROOT equals project root; skipping install file copy to avoid overwriting repository files."
+    else
+        cp "$schema_src" "$schema_dest"
 
-    if [ -d "$project_root/install/database/migrations" ]; then
-        # Clean old migrations first
-        rm -rf "$data_root/install/database/migrations/"* 2>/dev/null || true
-        cp -R "$project_root/install/database/migrations/"* "$data_root/install/database/migrations/" 2>/dev/null || true
-        if [ -f "$data_root/install/database/migrations/run_migrations.sh" ]; then
-            chmod +x "$data_root/install/database/migrations/run_migrations.sh" 2>/dev/null || true
+        if [ -d "$normalized_project_root/install/database/migrations" ]; then
+            # Clean old migrations first
+            rm -rf "$data_root/install/database/migrations/"* 2>/dev/null || true
+            cp -R "$normalized_project_root/install/database/migrations/"* "$data_root/install/database/migrations/" 2>/dev/null || true
+            if [ -f "$data_root/install/database/migrations/run_migrations.sh" ]; then
+                chmod +x "$data_root/install/database/migrations/run_migrations.sh" 2>/dev/null || true
+            fi
         fi
     fi
 

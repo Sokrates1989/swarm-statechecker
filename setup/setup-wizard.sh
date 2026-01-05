@@ -13,6 +13,7 @@ cd "$PROJECT_ROOT"
 source "$SCRIPT_DIR/modules/docker_helpers.sh"
 source "$SCRIPT_DIR/modules/menu_handlers.sh"
 source "$SCRIPT_DIR/modules/data-dirs.sh"
+source "$SCRIPT_DIR/modules/wizard.sh"
 
 is_setup_complete() {
     # is_setup_complete
@@ -49,6 +50,7 @@ ensure_env_file() {
     fi
 
     cp "$SCRIPT_DIR/.env.template" "$PROJECT_ROOT/.env"
+    update_env_values "$PROJECT_ROOT/.env" "DATA_ROOT" "$PROJECT_ROOT"
     echo "✅ Created .env from template"
     return 0
 }
@@ -68,9 +70,10 @@ _prompt_domain_with_validation() {
     local default_value="$2"
     local domain_name="$3"
     local result=""
+    local wiki_url="https://wiki.fe-wi.com/en/deployment/create-subdomain"
     
     while true; do
-        read_prompt "$prompt_text [$default_value]: " result
+        read_prompt "$prompt_text [$default_value] (if you need to create a new subdomain, see $wiki_url): " result
         result="${result:-$default_value}"
         
         if [ -z "$result" ]; then
@@ -83,7 +86,7 @@ _prompt_domain_with_validation() {
             return 0
         else
             echo "[WARN] Please enter a valid domain like $domain_name (must contain at least two dots)." >&2
-            echo "       If you need to create a new subdomain, configure it in your DNS provider first." >&2
+            echo "       If you need to create a new subdomain, see $wiki_url" >&2
         fi
     done
 }
@@ -176,8 +179,8 @@ prompt_update_env_values() {
     update_env_values "$env_file" "STACK_NAME" "${stack_name:-${current_stack_name:-$default_stack_name}}"
 
     local default_data_root="${PROJECT_ROOT:-$(pwd)}"
-    read_prompt "Data root [${current_data_root:-$default_data_root}]: " data_root
-    update_env_values "$env_file" "DATA_ROOT" "${data_root:-${current_data_root:-$default_data_root}}"
+    read_prompt "Data root [$default_data_root]: " data_root
+    update_env_values "$env_file" "DATA_ROOT" "${data_root:-$default_data_root}"
 
     read_prompt "Proxy type (traefik/none) [${current_proxy_type:-traefik}]: " proxy_type
     proxy_type=${proxy_type:-${current_proxy_type:-traefik}}
@@ -186,43 +189,6 @@ prompt_update_env_values() {
 
     _prompt_proxy_config "$env_file" "$proxy_type"
     _prompt_image_config "$env_file"
-}
-
-prepare_data_root() {
-    # prepare_data_root
-    # Creates all required directories under DATA_ROOT and copies required install
-    # files (DB schema and migrations) into place.
-    #
-    # Arguments:
-    # - $1: DATA_ROOT directory
-    local data_root="$1"
-
-    if [ -z "$data_root" ]; then
-        echo "❌ DATA_ROOT cannot be empty"
-        return 1
-    fi
-
-    echo ""
-    echo "[DATA] Preparing DATA_ROOT: $data_root"
-
-    mkdir -p "$data_root/logs/api" "$data_root/logs/check" "$data_root/db_data" "$data_root/install/database/migrations"
-
-    if [ ! -f "$PROJECT_ROOT/install/database/state_checker.sql" ]; then
-        echo "❌ Missing schema file: $PROJECT_ROOT/install/database/state_checker.sql"
-        return 1
-    fi
-
-    cp "$PROJECT_ROOT/install/database/state_checker.sql" "$data_root/install/database/state_checker.sql"
-
-    if [ -d "$PROJECT_ROOT/install/database/migrations" ]; then
-        cp -R "$PROJECT_ROOT/install/database/migrations/"* "$data_root/install/database/migrations/" 2>/dev/null || true
-        if [ -f "$data_root/install/database/migrations/run_migrations.sh" ]; then
-            chmod +x "$data_root/install/database/migrations/run_migrations.sh" 2>/dev/null || true
-        fi
-    fi
-
-    echo "✅ DATA_ROOT prepared"
-    return 0
 }
 
 mark_setup_complete() {
@@ -255,7 +221,62 @@ main() {
 
     ensure_env_file || exit 1
 
-    prompt_update_env_values "$PROJECT_ROOT/.env"
+    echo "How would you like to configure deployment settings?"
+    echo "1) Edit .env file (built from templates) and let the wizard read values from it"
+    echo "2) Answer questions interactively now (recommended)"
+    echo ""
+    read_prompt "Your choice (1-2) [2]: " config_mode
+    config_mode="${config_mode:-2}"
+
+    if [ "$config_mode" = "1" ]; then
+        if [ -z "${WIZARD_EDITOR:-}" ]; then
+            wizard_choose_editor || exit 1
+        fi
+        wizard_edit_file "$PROJECT_ROOT/.env" "$WIZARD_EDITOR"
+
+        set -a
+        source "$PROJECT_ROOT/.env"
+        set +a
+
+        STACK_NAME="${STACK_NAME:-statechecker}"
+        DATA_ROOT="${DATA_ROOT:-$PROJECT_ROOT}"
+        PROXY_TYPE="${PROXY_TYPE:-traefik}"
+
+        update_env_values "$PROJECT_ROOT/.env" "STACK_NAME" "$STACK_NAME"
+        update_env_values "$PROJECT_ROOT/.env" "DATA_ROOT" "$DATA_ROOT"
+        update_env_values "$PROJECT_ROOT/.env" "PROXY_TYPE" "$PROXY_TYPE"
+
+        if [ "$PROXY_TYPE" = "traefik" ]; then
+            if [ -z "${TRAEFIK_NETWORK_NAME:-}" ]; then
+                traefik_network=$(prompt_traefik_network "traefik")
+                update_env_values "$PROJECT_ROOT/.env" "TRAEFIK_NETWORK_NAME" "$traefik_network"
+            fi
+
+            if [ -z "${API_URL:-}" ]; then
+                api_url=$(_prompt_domain_with_validation "API_URL (Traefik Host)" "api.statechecker.domain.de" "api.statechecker.example.com")
+                update_env_values "$PROJECT_ROOT/.env" "API_URL" "$api_url"
+            fi
+            if [ -z "${WEB_URL:-}" ]; then
+                web_url=$(_prompt_domain_with_validation "WEB_URL (Traefik Host)" "web.statechecker.domain.de" "web.statechecker.example.com")
+                update_env_values "$PROJECT_ROOT/.env" "WEB_URL" "$web_url"
+            fi
+            if [ -z "${PHPMYADMIN_URL:-}" ]; then
+                pma_url=$(_prompt_domain_with_validation "PHPMYADMIN_URL (Traefik Host)" "phpmyadmin.statechecker.domain.de" "phpmyadmin.statechecker.example.com")
+                update_env_values "$PROJECT_ROOT/.env" "PHPMYADMIN_URL" "$pma_url"
+            fi
+        fi
+
+        IMAGE_NAME="${IMAGE_NAME:-sokrates1989/statechecker}"
+        IMAGE_VERSION="${IMAGE_VERSION:-latest}"
+        WEB_IMAGE_NAME="${WEB_IMAGE_NAME:-sokrates1989/statechecker-web}"
+        WEB_IMAGE_VERSION="${WEB_IMAGE_VERSION:-latest}"
+        update_env_values "$PROJECT_ROOT/.env" "IMAGE_NAME" "$IMAGE_NAME"
+        update_env_values "$PROJECT_ROOT/.env" "IMAGE_VERSION" "$IMAGE_VERSION"
+        update_env_values "$PROJECT_ROOT/.env" "WEB_IMAGE_NAME" "$WEB_IMAGE_NAME"
+        update_env_values "$PROJECT_ROOT/.env" "WEB_IMAGE_VERSION" "$WEB_IMAGE_VERSION"
+    else
+        prompt_update_env_values "$PROJECT_ROOT/.env"
+    fi
 
     local data_root
     data_root=$(grep '^DATA_ROOT=' "$PROJECT_ROOT/.env" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
