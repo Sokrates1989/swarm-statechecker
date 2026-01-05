@@ -321,7 +321,7 @@ update_env_values() {
     fi
 }
 
-source "$SCRIPT_DIR/setup/modules/data-dirs.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/data-dirs.sh"
 
 _ensure_data_dirs_before_deploy() {
     # _ensure_data_dirs_before_deploy

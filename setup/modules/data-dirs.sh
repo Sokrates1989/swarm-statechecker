@@ -27,6 +27,12 @@ prepare_data_root() {
     echo ""
     echo "[DATA] Preparing DATA_ROOT: $data_root"
 
+    # Parity with swarm-ananda: delete existing init files but keep db_data
+    if [ -f "$data_root/install/database/state_checker.sql" ]; then
+        echo "[INFO] Removing old database init file..."
+        rm -f "$data_root/install/database/state_checker.sql"
+    fi
+
     mkdir -p "$data_root/logs/api" "$data_root/logs/check" "$data_root/db_data" "$data_root/install/database/migrations"
 
     if [ ! -f "$project_root/install/database/state_checker.sql" ]; then
@@ -37,6 +43,8 @@ prepare_data_root() {
     cp "$project_root/install/database/state_checker.sql" "$data_root/install/database/state_checker.sql"
 
     if [ -d "$project_root/install/database/migrations" ]; then
+        # Clean old migrations first
+        rm -rf "$data_root/install/database/migrations/"* 2>/dev/null || true
         cp -R "$project_root/install/database/migrations/"* "$data_root/install/database/migrations/" 2>/dev/null || true
         if [ -f "$data_root/install/database/migrations/run_migrations.sh" ]; then
             chmod +x "$data_root/install/database/migrations/run_migrations.sh" 2>/dev/null || true
