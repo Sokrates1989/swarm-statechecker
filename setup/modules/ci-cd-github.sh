@@ -117,15 +117,39 @@ _ci_cd_github_print_required_vars_and_secrets() {
     echo "  DOCKER_PASSWORD${suffix}=<registry password/token>"
 }
 
+_ci_cd_github_prompt_env() {
+    # _ci_cd_github_prompt_env
+    # Prompts for environment-specific configuration.
+    local env_name="$1"
+    local suffix="$2"
+    local default_path="$3"
+    local default_stack="$4"
+    local default_file="$5"
+    local default_image="$6"
+    local default_host="$7"
+    local default_port="$8"
+
+    echo ""
+    echo "--- $env_name environment ---"
+    
+    local deploy_path stack_name stack_file image_name ssh_host ssh_port
+    deploy_path=$(_ci_cd_github_prompt_default "DEPLOY_PATH" "$default_path")
+    stack_name=$(_ci_cd_github_prompt_default "STACK_NAME" "$default_stack")
+    stack_file=$(_ci_cd_github_prompt_default "STACK_FILE" "$default_file")
+    image_name=$(_ci_cd_github_prompt_default "IMAGE_NAME" "$default_image")
+    ssh_host=$(_ci_cd_github_prompt_default "SSH_HOST" "$default_host")
+    ssh_port=$(_ci_cd_github_prompt_default "SSH_PORT" "$default_port")
+
+    _ci_cd_github_print_required_vars_and_secrets "$suffix" "$deploy_path" "$stack_name" "$stack_file" "$image_name" "$ssh_host" "$ssh_port"
+}
+
 run_ci_cd_github_helper() {
     echo "🔧 GitHub Actions CI/CD Helper"
     echo "=============================="
     echo ""
 
-    local repo_remote
+    local repo_remote repo_web
     repo_remote=$(_ci_cd_github_detect_repo_url)
-
-    local repo_web
     repo_web=$(_ci_cd_github_to_web_url "$repo_remote")
 
     if [ -n "$repo_web" ]; then
@@ -139,11 +163,7 @@ run_ci_cd_github_helper() {
     echo ""
     local public_ip
     public_ip=$(_ci_cd_github_get_public_ip)
-    if [ -n "$public_ip" ]; then
-        echo "Detected public IP (suggestion for SSH_HOST*): $public_ip"
-    else
-        echo "Public IP: (not detected)"
-    fi
+    [ -n "$public_ip" ] && echo "Detected public IP (suggestion for SSH_HOST*): $public_ip" || echo "Public IP: (not detected)"
 
     echo ""
     echo "Which environment do you want to configure?"
@@ -154,101 +174,27 @@ run_ci_cd_github_helper() {
     read -p "Your choice (1-3) [3]: " env_choice
     env_choice="${env_choice:-3}"
 
-    local default_deploy_path
-    default_deploy_path="$(pwd)"
-
     local env_file="$(pwd)/.env"
+    [ ! -f "$env_file" ] && echo "⚠️  .env not found. Auto-detection limited."
+
     local default_stack_name
     default_stack_name=$(_ci_cd_github_get_env_value "$env_file" "STACK_NAME")
-    if [ -z "$default_stack_name" ]; then
-        default_stack_name="$(basename "$(pwd)")"
-    fi
+    default_stack_name="${default_stack_name:-$(basename "$(pwd)")}"
 
     local default_image_name
     default_image_name=$(_ci_cd_github_get_env_value "$env_file" "IMAGE_NAME")
-    default_image_name="${default_image_name:-}"
 
-    local default_stack_file
-    default_stack_file="swarm-stack.yml"
-    if [ -f "swarm-stack.yml" ]; then
-        default_stack_file="swarm-stack.yml"
-    elif [ -f "config-stack.yml" ]; then
-        default_stack_file="config-stack.yml"
-    elif [ -f "docker-compose.yml" ]; then
-        default_stack_file="docker-compose.yml"
-    else
-        local first_compose
-        first_compose=$(ls -1 docker-compose-*.yml 2>/dev/null | head -n 1 || true)
-        if [ -n "$first_compose" ]; then
-            default_stack_file="$first_compose"
-        fi
-    fi
-
-    local default_ssh_host
-    default_ssh_host="${public_ip:-}"
-
-    local default_ssh_port
-    default_ssh_port="22"
-
-    if [ ! -f "$env_file" ]; then
-        echo "⚠️  .env not found in this folder. That's ok for CI/CD guidance, but values like STACK_NAME/IMAGE_NAME cannot be auto-detected."
-    fi
+    local default_stack_file="swarm-stack.yml"
+    [ -f "config-stack.yml" ] && default_stack_file="config-stack.yml"
+    [ -f "docker-compose.yml" ] && default_stack_file="docker-compose.yml"
 
     if [ "$env_choice" = "1" ] || [ "$env_choice" = "3" ]; then
-        echo ""
-        echo "--- main environment ---"
-        local deploy_path
-        deploy_path=$(_ci_cd_github_prompt_default "DEPLOY_PATH" "$default_deploy_path")
-
-        local stack_name
-        stack_name=$(_ci_cd_github_prompt_default "STACK_NAME" "$default_stack_name")
-
-        local stack_file
-        stack_file=$(_ci_cd_github_prompt_default "STACK_FILE" "$default_stack_file")
-
-        local image_name
-        image_name=$(_ci_cd_github_prompt_default "IMAGE_NAME" "$default_image_name")
-
-        local ssh_host
-        ssh_host=$(_ci_cd_github_prompt_default "SSH_HOST" "$default_ssh_host")
-
-        local ssh_port
-        ssh_port=$(_ci_cd_github_prompt_default "SSH_PORT" "$default_ssh_port")
-
-        _ci_cd_github_print_required_vars_and_secrets "" "$deploy_path" "$stack_name" "$stack_file" "$image_name" "$ssh_host" "$ssh_port"
+        _ci_cd_github_prompt_env "main" "" "$(pwd)" "$default_stack_name" "$default_stack_file" "$default_image_name" "${public_ip:-}" "22"
     fi
 
     if [ "$env_choice" = "2" ] || [ "$env_choice" = "3" ]; then
-        echo ""
-        echo "--- dev environment ---"
-        local deploy_path_dev
-        deploy_path_dev=$(_ci_cd_github_prompt_default "DEPLOY_PATH_DEV" "$default_deploy_path")
-
-        local stack_name_dev
-        stack_name_dev=$(_ci_cd_github_prompt_default "STACK_NAME_DEV" "${default_stack_name}-dev")
-
-        local stack_file_dev
-        stack_file_dev=$(_ci_cd_github_prompt_default "STACK_FILE_DEV" "$default_stack_file")
-
-        local image_name_dev
-        image_name_dev=$(_ci_cd_github_prompt_default "IMAGE_NAME_DEV" "$default_image_name")
-
-        local ssh_host_dev
-        ssh_host_dev=$(_ci_cd_github_prompt_default "SSH_HOST_DEV" "$default_ssh_host")
-
-        local ssh_port_dev
-        ssh_port_dev=$(_ci_cd_github_prompt_default "SSH_PORT_DEV" "$default_ssh_port")
-
-        _ci_cd_github_print_required_vars_and_secrets "_DEV" "$deploy_path_dev" "$stack_name_dev" "$stack_file_dev" "$image_name_dev" "$ssh_host_dev" "$ssh_port_dev"
+        _ci_cd_github_prompt_env "dev" "_DEV" "$(pwd)" "${default_stack_name}-dev" "$default_stack_file" "$default_image_name" "${public_ip:-}" "22"
     fi
 
-    echo ""
-    echo "Server-side checklist (run on the target server):"
-    echo "  - Ensure the SSH user is allowed to run Docker (usually in the 'docker' group)"
-    echo "  - Ensure the SSH user can write to DEPLOY_PATH (so the workflow can update .env)"
-    echo ""
-    echo "Example commands (adjust to your setup):"
-    echo "  sudo usermod -aG docker <deploy-user>"
-    echo "  sudo chown -R <deploy-user>:<deploy-user> <DEPLOY_PATH>"
-    echo ""
+    echo -e "\nServer-side checklist:\n  - Ensure SSH user is in docker group\n  - Ensure SSH user can write to DEPLOY_PATH\n"
 }

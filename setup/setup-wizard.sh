@@ -53,6 +53,41 @@ ensure_env_file() {
     return 0
 }
 
+_validate_domain() {
+    # _validate_domain
+    # Validates domain format (must have at least two dots).
+    local domain="$1"
+    local pattern='^[A-Za-z0-9.-]+\.[A-Za-z0-9-]+\.[A-Za-z]{2,}$'
+    [[ "$domain" =~ $pattern ]]
+}
+
+_prompt_domain_with_validation() {
+    # _prompt_domain_with_validation
+    # Prompts for a domain with validation and guidance.
+    local prompt_text="$1"
+    local default_value="$2"
+    local domain_name="$3"
+    local result=""
+    
+    while true; do
+        read_prompt "$prompt_text [$default_value]: " result
+        result="${result:-$default_value}"
+        
+        if [ -z "$result" ]; then
+            echo "[WARN] Domain is required for Traefik" >&2
+            continue
+        fi
+        
+        if _validate_domain "$result"; then
+            echo "$result"
+            return 0
+        else
+            echo "[WARN] Please enter a valid domain like $domain_name (must contain at least two dots)." >&2
+            echo "       If you need to create a new subdomain, configure it in your DNS provider first." >&2
+        fi
+    done
+}
+
 _prompt_proxy_config() {
     # _prompt_proxy_config
     # Prompts for proxy-related configuration based on selected proxy type.
@@ -80,14 +115,24 @@ _prompt_proxy_config() {
         traefik_network=$(prompt_traefik_network "${current_traefik:-traefik}")
         update_env_values "$env_file" "TRAEFIK_NETWORK_NAME" "$traefik_network"
 
-        read_prompt "API_URL (Traefik Host) [${current_api_url:-api.statechecker.domain.de}]: " api_url
-        update_env_values "$env_file" "API_URL" "${api_url:-${current_api_url:-api.statechecker.domain.de}}"
+        echo ""
+        echo "[CONFIG] Domain Configuration for Traefik"
+        echo "------------------------------------------"
+        echo "Configure the domains for each service. These must be valid FQDNs"
+        echo "pointing to your server (e.g., api.statechecker.example.com)."
+        echo ""
 
-        read_prompt "WEB_URL (Traefik Host) [${current_web_url:-web.statechecker.domain.de}]: " web_url
-        update_env_values "$env_file" "WEB_URL" "${web_url:-${current_web_url:-web.statechecker.domain.de}}"
+        local api_url
+        api_url=$(_prompt_domain_with_validation "API_URL (Traefik Host)" "${current_api_url:-api.statechecker.domain.de}" "api.statechecker.example.com")
+        update_env_values "$env_file" "API_URL" "$api_url"
 
-        read_prompt "PHPMYADMIN_URL (Traefik Host) [${current_pma_url:-phpmyadmin.statechecker.domain.de}]: " pma_url
-        update_env_values "$env_file" "PHPMYADMIN_URL" "${pma_url:-${current_pma_url:-phpmyadmin.statechecker.domain.de}}"
+        local web_url
+        web_url=$(_prompt_domain_with_validation "WEB_URL (Traefik Host)" "${current_web_url:-web.statechecker.domain.de}" "web.statechecker.example.com")
+        update_env_values "$env_file" "WEB_URL" "$web_url"
+
+        local pma_url
+        pma_url=$(_prompt_domain_with_validation "PHPMYADMIN_URL (Traefik Host)" "${current_pma_url:-phpmyadmin.statechecker.domain.de}" "phpmyadmin.statechecker.example.com")
+        update_env_values "$env_file" "PHPMYADMIN_URL" "$pma_url"
     fi
 }
 
@@ -126,11 +171,13 @@ prompt_update_env_values() {
 
     echo -e "\n==========================\n  Basic configuration\n==========================\n"
 
-    read_prompt "Stack name [${current_stack_name:-statechecker-server}]: " stack_name
-    update_env_values "$env_file" "STACK_NAME" "${stack_name:-${current_stack_name:-statechecker-server}}"
+    local default_stack_name="statechecker"
+    read_prompt "Stack name [${current_stack_name:-$default_stack_name}]: " stack_name
+    update_env_values "$env_file" "STACK_NAME" "${stack_name:-${current_stack_name:-$default_stack_name}}"
 
-    read_prompt "Data root [${current_data_root:-/gluster_storage/swarm/monitoring/statechecker-server}]: " data_root
-    update_env_values "$env_file" "DATA_ROOT" "${data_root:-${current_data_root:-/gluster_storage/swarm/monitoring/statechecker-server}}"
+    local default_data_root="${PROJECT_ROOT:-$(pwd)}"
+    read_prompt "Data root [${current_data_root:-$default_data_root}]: " data_root
+    update_env_values "$env_file" "DATA_ROOT" "${data_root:-${current_data_root:-$default_data_root}}"
 
     read_prompt "Proxy type (traefik/none) [${current_proxy_type:-traefik}]: " proxy_type
     proxy_type=${proxy_type:-${current_proxy_type:-traefik}}

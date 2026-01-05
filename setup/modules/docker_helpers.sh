@@ -75,7 +75,15 @@ prompt_traefik_network() {
     done < <(docker network ls --filter driver=overlay --format "{{.Name}}" 2>/dev/null)
 
     if [ ${#networks[@]} -eq 0 ]; then
-        read -r -p "Traefik network name [$default_network]: " input_net
+        echo "" >&2
+        echo "[WARN] No overlay networks found" >&2
+        echo "You need a Traefik public overlay network before deploying this stack." >&2
+        echo "" >&2
+        if [[ -r /dev/tty ]]; then
+            read -r -p "Traefik network name [$default_network]: " input_net < /dev/tty
+        else
+            read -r -p "Traefik network name [$default_network]: " input_net
+        fi
         echo "${input_net:-$default_network}"
         return 0
     fi
@@ -118,13 +126,21 @@ prompt_traefik_network() {
     echo "" >&2
 
     local selection
-    read -r -p "Traefik network (number or name) [${default_selection}]: " selection
+    if [[ -r /dev/tty ]]; then
+        read -r -p "Traefik network (number or name) [${default_selection}]: " selection < /dev/tty
+    else
+        read -r -p "Traefik network (number or name) [${default_selection}]: " selection
+    fi
     selection="${selection:-${default_selection}}"
 
     # Check if it's a number
     if [[ "$selection" =~ ^[0-9]+$ ]]; then
         if [ "$selection" -eq 0 ]; then
-            read -r -p "Network name [$default_network]: " network_name
+            if [[ -r /dev/tty ]]; then
+                read -r -p "Network name [$default_network]: " network_name < /dev/tty
+            else
+                read -r -p "Network name [$default_network]: " network_name
+            fi
             echo "${network_name:-$default_network}"
             return 0
         elif [ "$selection" -ge 1 ] && [ "$selection" -le "${#networks[@]}" ]; then

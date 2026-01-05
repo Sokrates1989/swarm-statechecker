@@ -97,7 +97,7 @@ function Update-StackImages {
     $config = Get-EnvConfig
     Set-ProcessEnvFromConfig -Config $config
 
-    $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
+    $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker" }
     $imgName = $config["IMAGE_NAME"]; $imgTag = $config["IMAGE_VERSION"]
     $webName = $config["WEB_IMAGE_NAME"]; $webTag = $config["WEB_IMAGE_VERSION"]
 
@@ -128,7 +128,7 @@ function Set-ServiceScale {
     System.Void
     #>
     $config = Get-EnvConfig
-    $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
+    $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker" }
 
     Write-Host "" 
     Write-Host "[SCALE] Scale Services" -ForegroundColor Cyan
@@ -397,7 +397,7 @@ function Invoke-StackDeploy {
     Deploys the stack using config-stack.yml with env-variable substitution.
     #>
     $config = Get-EnvConfig
-    $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
+    $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker" }
     
     Write-Host "[DEPLOY] Deploying stack: $stackName" -ForegroundColor Cyan
     Write-Host ""
@@ -464,7 +464,7 @@ function Remove-Stack {
     Removes the deployed stack.
     #>
     $config = Get-EnvConfig
-    $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
+    $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker" }
     
     Write-Host "[REMOVE] Removing stack: $stackName" -ForegroundColor Yellow
     docker stack rm $stackName
@@ -482,7 +482,7 @@ function Show-StackStatus {
     Prints docker stack services for the current stack.
     #>
     $config = Get-EnvConfig
-    $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
+    $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker" }
     
     Write-Host "Stack status: $stackName" -ForegroundColor Cyan
     Write-Host ""
@@ -498,7 +498,7 @@ function Show-ServiceLogs {
     Interactive log viewer for selected services.
     #>
     $config = Get-EnvConfig
-    $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
+    $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker" }
     
     Write-Host "Which service logs do you want to view?" -ForegroundColor Yellow
     Write-Host "1) api" -ForegroundColor Gray
@@ -547,7 +547,7 @@ function Invoke-PhpMyAdminToggle {
     Enables/disables phpMyAdmin by scaling its service to 1 or 0 replicas.
     #>
     $config = Get-EnvConfig
-    $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
+    $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker" }
 
     $svcName = "${stackName}_phpmyadmin"
     docker service inspect $svcName 2>$null
@@ -703,7 +703,7 @@ function Handle-MenuChoice {
         "4" {
             $config = Get-EnvConfig
             Set-ProcessEnvFromConfig -Config $config
-            $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
+            $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker" }
             $proxyType = if ($config["PROXY_TYPE"]) { $config["PROXY_TYPE"] } else { "traefik" }
             Test-DeploymentHealth -StackName $stackName -ProxyType $proxyType -WaitSeconds 10 | Out-Null
         }

@@ -115,14 +115,31 @@ function Show-GitHubActionsRequiredConfig {
     Write-Host "  DOCKER_PASSWORD${Suffix}=<registry password/token>" -ForegroundColor Gray
 }
 
+function Show-GitHubEnvHeader {
+    param([string]$EnvName)
+    Write-Host "`n--- $EnvName environment ---" -ForegroundColor Cyan
+}
+
+function Prompt-GitHubEnvConfig {
+    param(
+        [string]$Suffix,
+        [hashtable]$Defaults
+    )
+    $config = @{}
+    $config.DeployPath = Read-HostDefault -Prompt "DEPLOY_PATH$Suffix" -Default $Defaults.DeployPath
+    $config.StackName = Read-HostDefault -Prompt "STACK_NAME$Suffix" -Default $Defaults.StackName
+    $config.StackFile = Read-HostDefault -Prompt "STACK_FILE$Suffix" -Default $Defaults.StackFile
+    $config.ImageName = Read-HostDefault -Prompt "IMAGE_NAME$Suffix" -Default $Defaults.ImageName
+    $config.SshHost = Read-HostDefault -Prompt "SSH_HOST$Suffix" -Default $Defaults.SshHost
+    $config.SshPort = Read-HostDefault -Prompt "SSH_PORT$Suffix" -Default $Defaults.SshPort
+    return $config
+}
+
 function Invoke-GitHubCICDHelper {
-    Write-Host "GitHub Actions CI/CD Helper" -ForegroundColor Cyan
-    Write-Host "==============================" -ForegroundColor Cyan
-    Write-Host "" 
+    Write-Host "GitHub Actions CI/CD Helper`n==============================`n" -ForegroundColor Cyan
 
     $remote = Get-GitHubCicdRepoRemoteUrl
     $web = ConvertTo-GitHubWebUrl -RemoteUrl $remote
-
     if ($web) {
         Write-Host "Repository (detected): $web" -ForegroundColor Gray
         Write-Host "Variables URL: ${web}/settings/variables/actions" -ForegroundColor Gray
@@ -131,91 +148,40 @@ function Invoke-GitHubCICDHelper {
         Write-Host "Repository: (could not detect via git)" -ForegroundColor Yellow
     }
 
-    Write-Host "" 
     $publicIp = Get-PublicIpAddress
-    if ($publicIp) {
-        Write-Host "Detected public IP (suggestion for SSH_HOST*): $publicIp" -ForegroundColor Gray
-    } else {
-        Write-Host "Public IP: (not detected)" -ForegroundColor Yellow
-    }
+    if ($publicIp) { Write-Host "`nDetected public IP (suggestion for SSH_HOST*): $publicIp" -ForegroundColor Gray }
+    else { Write-Host "`nPublic IP: (not detected)" -ForegroundColor Yellow }
 
-    Write-Host "" 
-    Write-Host "Which environment do you want to configure?" -ForegroundColor Yellow
-    Write-Host "1) main" -ForegroundColor Gray
-    Write-Host "2) dev" -ForegroundColor Gray
-    Write-Host "3) both" -ForegroundColor Gray
-    Write-Host "" 
+    Write-Host "`nWhich environment do you want to configure?`n1) main`n2) dev`n3) both`n" -ForegroundColor Yellow
     $envChoice = Read-Host "Your choice (1-3) [3]"
     if ([string]::IsNullOrWhiteSpace($envChoice)) { $envChoice = "3" }
 
-    $defaultDeployPath = (Get-Location).Path
-
     $envFile = Join-Path (Get-Location).Path ".env"
-    $defaultStackName = Get-EnvValueFromFile -FilePath $envFile -Key "STACK_NAME"
-    if (-not $defaultStackName) {
-        $defaultStackName = (Split-Path -Leaf (Get-Location).Path)
+    $defaults = @{
+        DeployPath = (Get-Location).Path
+        StackName = Get-EnvValueFromFile -FilePath $envFile -Key "STACK_NAME" -or (Split-Path -Leaf (Get-Location).Path)
+        ImageName = Get-EnvValueFromFile -FilePath $envFile -Key "IMAGE_NAME"
+        StackFile = if (Test-Path "swarm-stack.yml") { "swarm-stack.yml" } elseif (Test-Path "config-stack.yml") { "config-stack.yml" } else { "docker-compose.yml" }
+        SshHost = $publicIp
+        SshPort = "22"
     }
 
-    $defaultImageName = Get-EnvValueFromFile -FilePath $envFile -Key "IMAGE_NAME"
-
-    $defaultStackFile = "swarm-stack.yml"
-    if (Test-Path "swarm-stack.yml") {
-        $defaultStackFile = "swarm-stack.yml"
-    } elseif (Test-Path "config-stack.yml") {
-        $defaultStackFile = "config-stack.yml"
-    } elseif (Test-Path "docker-compose.yml") {
-        $defaultStackFile = "docker-compose.yml"
-    } else {
-        $composeFiles = Get-ChildItem -Path (Get-Location).Path -Filter "docker-compose-*.yml" -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($composeFiles) {
-            $defaultStackFile = $composeFiles.Name
-        }
-    }
-
-    $defaultSshHost = $publicIp
-    $defaultSshPort = "22"
-
-    if (-not (Test-Path $envFile)) {
-        Write-Host "[WARN] .env not found in this folder. That's ok for CI/CD guidance, but STACK_NAME/IMAGE_NAME cannot be auto-detected." -ForegroundColor Yellow
-    }
+    if (-not (Test-Path $envFile)) { Write-Host "[WARN] .env not found. STACK_NAME/IMAGE_NAME cannot be auto-detected." -ForegroundColor Yellow }
 
     if ($envChoice -eq "1" -or $envChoice -eq "3") {
-        Write-Host "" 
-        Write-Host "--- main environment ---" -ForegroundColor Cyan
-
-        $deployPath = Read-HostDefault -Prompt "DEPLOY_PATH" -Default $defaultDeployPath
-        $stackName = Read-HostDefault -Prompt "STACK_NAME" -Default $defaultStackName
-        $stackFile = Read-HostDefault -Prompt "STACK_FILE" -Default $defaultStackFile
-        $imageName = Read-HostDefault -Prompt "IMAGE_NAME" -Default $defaultImageName
-        $sshHost = Read-HostDefault -Prompt "SSH_HOST" -Default $defaultSshHost
-        $sshPort = Read-HostDefault -Prompt "SSH_PORT" -Default $defaultSshPort
-
-        Show-GitHubActionsRequiredConfig -Suffix "" -DeployPath $deployPath -StackName $stackName -StackFile $stackFile -ImageName $imageName -SshHost $sshHost -SshPort $sshPort
+        Show-GitHubEnvHeader -EnvName "main"
+        $cfg = Prompt-GitHubEnvConfig -Suffix "" -Defaults $defaults
+        Show-GitHubActionsRequiredConfig -Suffix "" -DeployPath $cfg.DeployPath -StackName $cfg.StackName -StackFile $cfg.StackFile -ImageName $cfg.ImageName -SshHost $cfg.SshHost -SshPort $cfg.SshPort
     }
 
     if ($envChoice -eq "2" -or $envChoice -eq "3") {
-        Write-Host "" 
-        Write-Host "--- dev environment ---" -ForegroundColor Cyan
-
-        $deployPathDev = Read-HostDefault -Prompt "DEPLOY_PATH_DEV" -Default $defaultDeployPath
-        $stackNameDev = Read-HostDefault -Prompt "STACK_NAME_DEV" -Default ("{0}-dev" -f $defaultStackName)
-        $stackFileDev = Read-HostDefault -Prompt "STACK_FILE_DEV" -Default $defaultStackFile
-        $imageNameDev = Read-HostDefault -Prompt "IMAGE_NAME_DEV" -Default $defaultImageName
-        $sshHostDev = Read-HostDefault -Prompt "SSH_HOST_DEV" -Default $defaultSshHost
-        $sshPortDev = Read-HostDefault -Prompt "SSH_PORT_DEV" -Default $defaultSshPort
-
-        Show-GitHubActionsRequiredConfig -Suffix "_DEV" -DeployPath $deployPathDev -StackName $stackNameDev -StackFile $stackFileDev -ImageName $imageNameDev -SshHost $sshHostDev -SshPort $sshPortDev
+        Show-GitHubEnvHeader -EnvName "dev"
+        $devDefaults = $defaults.Clone(); $devDefaults.StackName = "{0}-dev" -f $defaults.StackName
+        $cfg = Prompt-GitHubEnvConfig -Suffix "_DEV" -Defaults $devDefaults
+        Show-GitHubActionsRequiredConfig -Suffix "_DEV" -DeployPath $cfg.DeployPath -StackName $cfg.StackName -StackFile $cfg.StackFile -ImageName $cfg.ImageName -SshHost $cfg.SshHost -SshPort $cfg.SshPort
     }
 
-    Write-Host "" 
-    Write-Host "Server-side checklist (run on the target server):" -ForegroundColor Yellow
-    Write-Host "  - Ensure the SSH user is allowed to run Docker (usually in the docker group)" -ForegroundColor Gray
-    Write-Host "  - Ensure the SSH user can write to DEPLOY_PATH (so the workflow can update .env)" -ForegroundColor Gray
-    Write-Host "" 
-    Write-Host "Example commands (adjust to your setup):" -ForegroundColor Yellow
-    Write-Host "  sudo usermod -aG docker <deploy-user>" -ForegroundColor Gray
-    Write-Host "  sudo chown -R <deploy-user>:<deploy-user> <DEPLOY_PATH>" -ForegroundColor Gray
-    Write-Host "" 
+    Write-Host "`nServer-side checklist:`n  - Ensure SSH user is in docker group`n  - Ensure SSH user can write to DEPLOY_PATH`n" -ForegroundColor Yellow
 }
 
 try {

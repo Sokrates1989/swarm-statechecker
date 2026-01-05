@@ -54,8 +54,8 @@ function Get-CurrentEnvValues {
     
     $keys = @("STACK_NAME", "DATA_ROOT", "PROXY_TYPE", "TRAEFIK_NETWORK_NAME", "API_URL", "WEB_URL", "PHPMYADMIN_URL", "WEB_PORT", "PHPMYADMIN_PORT", "IMAGE_NAME", "IMAGE_VERSION", "WEB_IMAGE_NAME", "WEB_IMAGE_VERSION")
     $defaults = @{
-        "STACK_NAME" = "statechecker-server"
-        "DATA_ROOT" = "/gluster_storage/swarm/monitoring/statechecker-server"
+        "STACK_NAME" = "statechecker"
+        "DATA_ROOT" = (Get-Location).Path
         "PROXY_TYPE" = "traefik"
         "TRAEFIK_NETWORK_NAME" = "traefik"
         "API_URL" = "api.statechecker.domain.de"
@@ -76,6 +76,30 @@ function Get-CurrentEnvValues {
     return $values
 }
 
+function Test-ValidDomain {
+    param([string]$Domain)
+    $pattern = '^[A-Za-z0-9.-]+\.[A-Za-z0-9-]+\.[A-Za-z]{2,}$'
+    return $Domain -match $pattern
+}
+
+function Read-DomainWithValidation {
+    param([string]$Prompt, [string]$Default, [string]$Example)
+    while ($true) {
+        $result = Read-Host "$Prompt [$Default]"
+        if ([string]::IsNullOrWhiteSpace($result)) { $result = $Default }
+        if ([string]::IsNullOrWhiteSpace($result)) {
+            Write-Host "[WARN] Domain is required for Traefik" -ForegroundColor Yellow
+            continue
+        }
+        if (Test-ValidDomain -Domain $result) {
+            return $result
+        } else {
+            Write-Host "[WARN] Please enter a valid domain like $Example (must contain at least two dots)." -ForegroundColor Yellow
+            Write-Host "       If you need to create a new subdomain, configure it in your DNS provider first." -ForegroundColor Gray
+        }
+    }
+}
+
 function Prompt-ProxyConfig {
     param($EnvFile, $ProxyType, $Current)
     if ($ProxyType -eq "none") {
@@ -88,14 +112,21 @@ function Prompt-ProxyConfig {
         $traefikNetwork = Select-TraefikNetwork -DefaultNetwork $Current['TRAEFIK_NETWORK_NAME']
         Update-EnvValue -EnvFile $EnvFile -Key "TRAEFIK_NETWORK_NAME" -Value ($traefikNetwork -or $Current['TRAEFIK_NETWORK_NAME']) | Out-Null
 
-        $apiUrl = Read-Host "API_URL (Traefik Host) [$($Current['API_URL'])]"
-        Update-EnvValue -EnvFile $EnvFile -Key "API_URL" -Value ($apiUrl -or $Current['API_URL']) | Out-Null
+        Write-Host ""
+        Write-Host "[CONFIG] Domain Configuration for Traefik" -ForegroundColor Cyan
+        Write-Host "------------------------------------------" -ForegroundColor Cyan
+        Write-Host "Configure the domains for each service. These must be valid FQDNs"
+        Write-Host "pointing to your server (e.g., api.statechecker.example.com)."
+        Write-Host ""
 
-        $webUrl = Read-Host "WEB_URL (Traefik Host) [$($Current['WEB_URL'])]"
-        Update-EnvValue -EnvFile $EnvFile -Key "WEB_URL" -Value ($webUrl -or $Current['WEB_URL']) | Out-Null
+        $apiUrl = Read-DomainWithValidation -Prompt "API_URL (Traefik Host)" -Default $Current['API_URL'] -Example "api.statechecker.example.com"
+        Update-EnvValue -EnvFile $EnvFile -Key "API_URL" -Value $apiUrl | Out-Null
 
-        $pmaUrl = Read-Host "PHPMYADMIN_URL (Traefik Host) [$($Current['PHPMYADMIN_URL'])]"
-        Update-EnvValue -EnvFile $EnvFile -Key "PHPMYADMIN_URL" -Value ($pmaUrl -or $Current['PHPMYADMIN_URL']) | Out-Null
+        $webUrl = Read-DomainWithValidation -Prompt "WEB_URL (Traefik Host)" -Default $Current['WEB_URL'] -Example "web.statechecker.example.com"
+        Update-EnvValue -EnvFile $EnvFile -Key "WEB_URL" -Value $webUrl | Out-Null
+
+        $pmaUrl = Read-DomainWithValidation -Prompt "PHPMYADMIN_URL (Traefik Host)" -Default $Current['PHPMYADMIN_URL'] -Example "phpmyadmin.statechecker.example.com"
+        Update-EnvValue -EnvFile $EnvFile -Key "PHPMYADMIN_URL" -Value $pmaUrl | Out-Null
     }
 }
 

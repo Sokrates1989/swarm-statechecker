@@ -19,7 +19,7 @@ check_stack_health() {
     # check_stack_health
     # Runs a health check using setup/modules/health-check.sh.
     load_env
-    local stack_name="${STACK_NAME:-statechecker-server}"
+    local stack_name="${STACK_NAME:-statechecker}"
     local proxy_type="${PROXY_TYPE:-traefik}"
 
     local wait_seconds="${HEALTH_WAIT_SECONDS:-10}"
@@ -41,7 +41,7 @@ _update_image_service() {
     local img_tag="$2"
     local svc_prefix="$3"
     local env_key="$4"
-    local stack_name="${STACK_NAME:-statechecker-server}"
+    local stack_name="${STACK_NAME:-statechecker}"
 
     echo ""
     echo "Pulling: ${img_name}:${img_tag}"
@@ -101,7 +101,7 @@ _scale_service_logic() {
     local svc_name="$1"
     local replicas="$2"
     local env_key="$3"
-    local stack_name="${STACK_NAME:-statechecker-server}"
+    local stack_name="${STACK_NAME:-statechecker}"
 
     docker service scale "${stack_name}_${svc_name}=${replicas}" || true
     if [ -f .env ]; then
@@ -321,7 +321,7 @@ update_env_values() {
     fi
 }
 
-source "$SCRIPT_DIR/modules/data-dirs.sh"
+source "$SCRIPT_DIR/setup/modules/data-dirs.sh"
 
 _ensure_data_dirs_before_deploy() {
     # _ensure_data_dirs_before_deploy
@@ -377,7 +377,7 @@ _render_stack_config() {
 deploy_stack() {
     # deploy_stack
     # Deploys the Docker Swarm stack using config-stack.yml.
-    local stack_name="${STACK_NAME:-statechecker-server}"
+    local stack_name="${STACK_NAME:-statechecker}"
     echo "🚀 Deploying stack: $stack_name"
     echo ""
     
@@ -462,7 +462,7 @@ remove_stack() {
     # remove_stack
     # Removes the Docker Swarm stack.
     load_env
-    local stack_name="${STACK_NAME:-statechecker-server}"
+    local stack_name="${STACK_NAME:-statechecker}"
     
     echo "🛑 Removing stack: $stack_name"
     docker stack rm "$stack_name"
@@ -478,7 +478,7 @@ show_stack_status() {
     # show_stack_status
     # Displays docker stack services for the current stack.
     load_env
-    local stack_name="${STACK_NAME:-statechecker-server}"
+    local stack_name="${STACK_NAME:-statechecker}"
     
     echo "📋 Stack status: $stack_name"
     echo ""
@@ -489,7 +489,7 @@ show_stack_logs() {
     # show_stack_logs
     # Interactive selection of which service logs to follow.
     load_env
-    local stack_name="${STACK_NAME:-statechecker-server}"
+    local stack_name="${STACK_NAME:-statechecker}"
     
     echo "Which service logs do you want to view?"
     echo "1) api"
@@ -551,7 +551,7 @@ toggle_phpmyadmin() {
     # Toggles the phpMyAdmin service replica count between 0 and 1 and persists
     # PHPMYADMIN_REPLICAS in .env.
     load_env
-    local stack_name="${STACK_NAME:-statechecker-server}"
+    local stack_name="${STACK_NAME:-statechecker}"
     local svc_name="${stack_name}_phpmyadmin"
 
     echo "🔁 Toggle phpMyAdmin service for stack: $stack_name"
