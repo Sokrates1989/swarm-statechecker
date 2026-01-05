@@ -11,6 +11,7 @@ Set-Location $ProjectRoot
 
 Import-Module "$ScriptDir\modules\docker_helpers.ps1" -Force
 Import-Module "$ScriptDir\modules\menu_handlers.ps1" -Force
+Import-Module "$ScriptDir\modules\data-dirs.ps1" -Force
 
 function Test-SetupComplete {
     <#
@@ -46,185 +47,97 @@ function New-EnvFileIfMissing {
     return $true
 }
 
+function Get-CurrentEnvValues {
+    param([string]$EnvFile)
+    $content = Get-Content $EnvFile -ErrorAction SilentlyContinue
+    $values = @{}
+    
+    $keys = @("STACK_NAME", "DATA_ROOT", "PROXY_TYPE", "TRAEFIK_NETWORK_NAME", "API_URL", "WEB_URL", "PHPMYADMIN_URL", "WEB_PORT", "PHPMYADMIN_PORT", "IMAGE_NAME", "IMAGE_VERSION", "WEB_IMAGE_NAME", "WEB_IMAGE_VERSION")
+    $defaults = @{
+        "STACK_NAME" = "statechecker-server"
+        "DATA_ROOT" = "/gluster_storage/swarm/monitoring/statechecker-server"
+        "PROXY_TYPE" = "traefik"
+        "TRAEFIK_NETWORK_NAME" = "traefik"
+        "API_URL" = "api.statechecker.domain.de"
+        "WEB_URL" = "web.statechecker.domain.de"
+        "PHPMYADMIN_URL" = "phpmyadmin.statechecker.domain.de"
+        "WEB_PORT" = "8080"
+        "PHPMYADMIN_PORT" = "8081"
+        "IMAGE_NAME" = "sokrates1989/statechecker"
+        "IMAGE_VERSION" = "latest"
+        "WEB_IMAGE_NAME" = "sokrates1989/statechecker-web"
+        "WEB_IMAGE_VERSION" = "latest"
+    }
+
+    foreach ($k in $keys) {
+        $line = $content | Select-String "^${k}=" | Select-Object -First 1
+        $values[$k] = if ($line) { ($line.Line -split '=', 2)[1].Trim('"') } else { $defaults[$k] }
+    }
+    return $values
+}
+
+function Prompt-ProxyConfig {
+    param($EnvFile, $ProxyType, $Current)
+    if ($ProxyType -eq "none") {
+        $webPort = Read-Host "WEB_PORT (localhost) [$($Current['WEB_PORT'])]"
+        Update-EnvValue -EnvFile $EnvFile -Key "WEB_PORT" -Value ($webPort -or $Current['WEB_PORT']) | Out-Null
+
+        $pmaPort = Read-Host "PHPMYADMIN_PORT (localhost) [$($Current['PHPMYADMIN_PORT'])]"
+        Update-EnvValue -EnvFile $EnvFile -Key "PHPMYADMIN_PORT" -Value ($pmaPort -or $Current['PHPMYADMIN_PORT']) | Out-Null
+    } else {
+        $traefikNetwork = Select-TraefikNetwork -DefaultNetwork $Current['TRAEFIK_NETWORK_NAME']
+        Update-EnvValue -EnvFile $EnvFile -Key "TRAEFIK_NETWORK_NAME" -Value ($traefikNetwork -or $Current['TRAEFIK_NETWORK_NAME']) | Out-Null
+
+        $apiUrl = Read-Host "API_URL (Traefik Host) [$($Current['API_URL'])]"
+        Update-EnvValue -EnvFile $EnvFile -Key "API_URL" -Value ($apiUrl -or $Current['API_URL']) | Out-Null
+
+        $webUrl = Read-Host "WEB_URL (Traefik Host) [$($Current['WEB_URL'])]"
+        Update-EnvValue -EnvFile $EnvFile -Key "WEB_URL" -Value ($webUrl -or $Current['WEB_URL']) | Out-Null
+
+        $pmaUrl = Read-Host "PHPMYADMIN_URL (Traefik Host) [$($Current['PHPMYADMIN_URL'])]"
+        Update-EnvValue -EnvFile $EnvFile -Key "PHPMYADMIN_URL" -Value ($pmaUrl -or $Current['PHPMYADMIN_URL']) | Out-Null
+    }
+}
+
+function Prompt-ImageConfig {
+    param($EnvFile, $Current)
+    $imageName = Read-Host "API/CHECK image name [$($Current['IMAGE_NAME'])]"
+    Update-EnvValue -EnvFile $EnvFile -Key "IMAGE_NAME" -Value ($imageName -or $Current['IMAGE_NAME']) | Out-Null
+
+    $imageTag = Read-Host "API/CHECK image tag [$($Current['IMAGE_VERSION'])]"
+    Update-EnvValue -EnvFile $EnvFile -Key "IMAGE_VERSION" -Value ($imageTag -or $Current['IMAGE_VERSION']) | Out-Null
+
+    $webImageName = Read-Host "WEB image name [$($Current['WEB_IMAGE_NAME'])]"
+    Update-EnvValue -EnvFile $EnvFile -Key "WEB_IMAGE_NAME" -Value ($webImageName -or $Current['WEB_IMAGE_NAME']) | Out-Null
+
+    $webImageTag = Read-Host "WEB image tag [$($Current['WEB_IMAGE_VERSION'])]"
+    Update-EnvValue -EnvFile $EnvFile -Key "WEB_IMAGE_VERSION" -Value ($webImageTag -or $Current['WEB_IMAGE_VERSION']) | Out-Null
+}
+
 function Set-EnvValuesInteractive {
     <#
     .SYNOPSIS
     Prompts for a handful of key env values and writes them to .env.
-
-    .PARAMETER EnvFile
-    Path to the .env file.
     #>
-    param(
-        [Parameter(Mandatory = $true)][string]$EnvFile
-    )
+    param([Parameter(Mandatory = $true)][string]$EnvFile)
 
-    $content = Get-Content $EnvFile -ErrorAction SilentlyContinue
+    $current = Get-CurrentEnvValues -EnvFile $EnvFile
 
-    $currentStackName = ($content | Select-String '^STACK_NAME=' | Select-Object -First 1).Line
-    $currentStackName = if ($currentStackName) { ($currentStackName -split '=', 2)[1].Trim('"') } else { "statechecker-server" }
+    Write-Host "`n==========================`n  Basic configuration`n==========================`n" -ForegroundColor Cyan
 
-    $currentDataRoot = ($content | Select-String '^DATA_ROOT=' | Select-Object -First 1).Line
-    $currentDataRoot = if ($currentDataRoot) { ($currentDataRoot -split '=', 2)[1].Trim('"') } else { "/gluster_storage/swarm/monitoring/statechecker-server" }
+    $stackName = Read-Host "Stack name [$($current['STACK_NAME'])]"
+    Update-EnvValue -EnvFile $EnvFile -Key "STACK_NAME" -Value ($stackName -or $current['STACK_NAME']) | Out-Null
 
-    $currentProxyType = ($content | Select-String '^PROXY_TYPE=' | Select-Object -First 1).Line
-    $currentProxyType = if ($currentProxyType) { ($currentProxyType -split '=', 2)[1].Trim('"') } else { "traefik" }
+    $dataRoot = Read-Host "Data root [$($current['DATA_ROOT'])]"
+    Update-EnvValue -EnvFile $EnvFile -Key "DATA_ROOT" -Value ($dataRoot -or $current['DATA_ROOT']) | Out-Null
 
-    $currentTraefik = ($content | Select-String '^TRAEFIK_NETWORK_NAME=' | Select-Object -First 1).Line
-    $currentTraefik = if ($currentTraefik) { ($currentTraefik -split '=', 2)[1].Trim('"') } else { "traefik" }
-
-    $currentApiUrl = ($content | Select-String '^API_URL=' | Select-Object -First 1).Line
-    $currentApiUrl = if ($currentApiUrl) { ($currentApiUrl -split '=', 2)[1].Trim('"') } else { "api.statechecker.domain.de" }
-
-    $currentWebUrl = ($content | Select-String '^WEB_URL=' | Select-Object -First 1).Line
-    $currentWebUrl = if ($currentWebUrl) { ($currentWebUrl -split '=', 2)[1].Trim('"') } else { "web.statechecker.domain.de" }
-
-    $currentPmaUrl = ($content | Select-String '^PHPMYADMIN_URL=' | Select-Object -First 1).Line
-    $currentPmaUrl = if ($currentPmaUrl) { ($currentPmaUrl -split '=', 2)[1].Trim('"') } else { "phpmyadmin.statechecker.domain.de" }
-
-    $currentWebPort = ($content | Select-String '^WEB_PORT=' | Select-Object -First 1).Line
-    $currentWebPort = if ($currentWebPort) { ($currentWebPort -split '=', 2)[1].Trim('"') } else { "8080" }
-
-    $currentPmaPort = ($content | Select-String '^PHPMYADMIN_PORT=' | Select-Object -First 1).Line
-    $currentPmaPort = if ($currentPmaPort) { ($currentPmaPort -split '=', 2)[1].Trim('"') } else { "8081" }
-
-    $currentImage = ($content | Select-String '^IMAGE_NAME=' | Select-Object -First 1).Line
-    $currentImage = if ($currentImage) { ($currentImage -split '=', 2)[1].Trim('"') } else { "sokrates1989/statechecker" }
-
-    $currentTag = ($content | Select-String '^IMAGE_VERSION=' | Select-Object -First 1).Line
-    $currentTag = if ($currentTag) { ($currentTag -split '=', 2)[1].Trim('"') } else { "latest" }
-
-    $currentWebImage = ($content | Select-String '^WEB_IMAGE_NAME=' | Select-Object -First 1).Line
-    $currentWebImage = if ($currentWebImage) { ($currentWebImage -split '=', 2)[1].Trim('"') } else { "sokrates1989/statechecker-web" }
-
-    $currentWebTag = ($content | Select-String '^WEB_IMAGE_VERSION=' | Select-Object -First 1).Line
-    $currentWebTag = if ($currentWebTag) { ($currentWebTag -split '=', 2)[1].Trim('"') } else { "latest" }
-
-    Write-Host "" 
-    Write-Host "==========================" -ForegroundColor Cyan
-    Write-Host "  Basic configuration" -ForegroundColor Cyan
-    Write-Host "==========================" -ForegroundColor Cyan
-    Write-Host "" 
-
-    $stackName = Read-Host "Stack name [$currentStackName]"
-    if ([string]::IsNullOrWhiteSpace($stackName)) { $stackName = $currentStackName }
-    Update-EnvValue -EnvFile $EnvFile -Key "STACK_NAME" -Value $stackName | Out-Null
-
-    $dataRoot = Read-Host "Data root [$currentDataRoot]"
-    if ([string]::IsNullOrWhiteSpace($dataRoot)) { $dataRoot = $currentDataRoot }
-    Update-EnvValue -EnvFile $EnvFile -Key "DATA_ROOT" -Value $dataRoot | Out-Null
-
-    $proxyType = Read-Host "Proxy type (traefik/none) [$currentProxyType]"
-    if ([string]::IsNullOrWhiteSpace($proxyType)) { $proxyType = $currentProxyType }
+    $proxyType = Read-Host "Proxy type (traefik/none) [$($current['PROXY_TYPE'])]"
+    $proxyType = if ($proxyType) { $proxyType } else { $current['PROXY_TYPE'] }
     if ($proxyType -ne "traefik" -and $proxyType -ne "none") { $proxyType = "traefik" }
     Update-EnvValue -EnvFile $EnvFile -Key "PROXY_TYPE" -Value $proxyType | Out-Null
 
-    if ($proxyType -eq "none") {
-        $webPort = Read-Host "WEB_PORT (localhost) [$currentWebPort]"
-        if ([string]::IsNullOrWhiteSpace($webPort)) { $webPort = $currentWebPort }
-        Update-EnvValue -EnvFile $EnvFile -Key "WEB_PORT" -Value $webPort | Out-Null
-
-        $pmaPort = Read-Host "PHPMYADMIN_PORT (localhost) [$currentPmaPort]"
-        if ([string]::IsNullOrWhiteSpace($pmaPort)) { $pmaPort = $currentPmaPort }
-        Update-EnvValue -EnvFile $EnvFile -Key "PHPMYADMIN_PORT" -Value $pmaPort | Out-Null
-    }
-
-    if ($proxyType -eq "traefik") {
-        $traefikNetwork = Select-TraefikNetwork -DefaultNetwork $currentTraefik
-        if ([string]::IsNullOrWhiteSpace($traefikNetwork)) { $traefikNetwork = $currentTraefik }
-        Update-EnvValue -EnvFile $EnvFile -Key "TRAEFIK_NETWORK_NAME" -Value $traefikNetwork | Out-Null
-
-        $apiUrl = Read-Host "API_URL (Traefik Host) [$currentApiUrl]"
-        if ([string]::IsNullOrWhiteSpace($apiUrl)) { $apiUrl = $currentApiUrl }
-        Update-EnvValue -EnvFile $EnvFile -Key "API_URL" -Value $apiUrl | Out-Null
-
-        $webUrl = Read-Host "WEB_URL (Traefik Host) [$currentWebUrl]"
-        if ([string]::IsNullOrWhiteSpace($webUrl)) { $webUrl = $currentWebUrl }
-        Update-EnvValue -EnvFile $EnvFile -Key "WEB_URL" -Value $webUrl | Out-Null
-
-        $pmaUrl = Read-Host "PHPMYADMIN_URL (Traefik Host) [$currentPmaUrl]"
-        if ([string]::IsNullOrWhiteSpace($pmaUrl)) { $pmaUrl = $currentPmaUrl }
-        Update-EnvValue -EnvFile $EnvFile -Key "PHPMYADMIN_URL" -Value $pmaUrl | Out-Null
-    }
-
-    $imageName = Read-Host "API/CHECK image name [$currentImage]"
-    if ([string]::IsNullOrWhiteSpace($imageName)) { $imageName = $currentImage }
-    Update-EnvValue -EnvFile $EnvFile -Key "IMAGE_NAME" -Value $imageName | Out-Null
-
-    $imageTag = Read-Host "API/CHECK image tag [$currentTag]"
-    if ([string]::IsNullOrWhiteSpace($imageTag)) { $imageTag = $currentTag }
-    Update-EnvValue -EnvFile $EnvFile -Key "IMAGE_VERSION" -Value $imageTag | Out-Null
-
-    $webImageName = Read-Host "WEB image name [$currentWebImage]"
-    if ([string]::IsNullOrWhiteSpace($webImageName)) { $webImageName = $currentWebImage }
-    Update-EnvValue -EnvFile $EnvFile -Key "WEB_IMAGE_NAME" -Value $webImageName | Out-Null
-
-    $webImageTag = Read-Host "WEB image tag [$currentWebTag]"
-    if ([string]::IsNullOrWhiteSpace($webImageTag)) { $webImageTag = $currentWebTag }
-    Update-EnvValue -EnvFile $EnvFile -Key "WEB_IMAGE_VERSION" -Value $webImageTag | Out-Null
-}
-
-function Initialize-DataRoot {
-    <#
-    .SYNOPSIS
-    Creates required directory structure under DATA_ROOT and copies install files
-    (schema + migrations) into place.
-
-    .PARAMETER DataRoot
-    The data root directory.
-
-    .OUTPUTS
-    System.Boolean
-    #>
-    param(
-        [Parameter(Mandatory = $true)][string]$DataRoot
-    )
-
-    if ([string]::IsNullOrWhiteSpace($DataRoot)) {
-        Write-Host "[ERROR] DATA_ROOT cannot be empty" -ForegroundColor Red
-        return $false
-    }
-
-    Write-Host "" 
-    Write-Host "[DATA] Preparing DATA_ROOT: $DataRoot" -ForegroundColor Cyan
-
-    $dirs = @(
-        Join-Path $DataRoot "logs/api",
-        Join-Path $DataRoot "logs/check",
-        Join-Path $DataRoot "db_data",
-        Join-Path $DataRoot "install/database/migrations"
-    )
-
-    foreach ($d in $dirs) {
-        New-Item -ItemType Directory -Path $d -Force | Out-Null
-    }
-
-    $schemaSrc = Join-Path $ProjectRoot "install/database/state_checker.sql"
-    $schemaDst = Join-Path $DataRoot "install/database/state_checker.sql"
-
-    if (-not (Test-Path $schemaSrc)) {
-        Write-Host "[ERROR] Missing schema file: $schemaSrc" -ForegroundColor Red
-        return $false
-    }
-
-    Copy-Item $schemaSrc $schemaDst -Force
-
-    $migSrc = Join-Path $ProjectRoot "install/database/migrations"
-    $migDst = Join-Path $DataRoot "install/database/migrations"
-
-    if (Test-Path $migSrc) {
-        Copy-Item (Join-Path $migSrc "*") $migDst -Recurse -Force
-
-        $runMig = Join-Path $migDst "run_migrations.sh"
-        if (Test-Path $runMig) {
-            $chmod = Get-Command chmod -ErrorAction SilentlyContinue
-            if ($null -ne $chmod) {
-                & chmod +x $runMig 2>$null
-            }
-        }
-    }
-
-    Write-Host "[OK] DATA_ROOT prepared" -ForegroundColor Green
-    return $true
+    Prompt-ProxyConfig -EnvFile $EnvFile -ProxyType $proxyType -Current $current
+    Prompt-ImageConfig -EnvFile $EnvFile -Current $current
 }
 
 function Set-SetupCompleteMarker {
@@ -262,7 +175,7 @@ Set-EnvValuesInteractive -EnvFile "$ProjectRoot\.env"
 $envConfig = Get-EnvConfig
 $dataRoot = $envConfig["DATA_ROOT"]
 
-if (-not (Initialize-DataRoot -DataRoot $dataRoot)) {
+if (-not (Initialize-DataRoot -DataRoot $dataRoot -ProjectRoot $ProjectRoot)) {
     exit 1
 }
 

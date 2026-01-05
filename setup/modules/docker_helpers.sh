@@ -29,6 +29,26 @@ check_docker_swarm() {
     local swarm_status
     swarm_status=$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null)
     
+    if [ "$swarm_status" = "error" ]; then
+        echo "❌ Docker Swarm is in an ERROR state."
+        
+        local err_line
+        err_line=$(docker info 2>&1 | grep '^  Error:' | head -n 1)
+        if [ -n "$err_line" ]; then
+            echo "   $err_line"
+        fi
+
+        echo ""
+        echo "Common causes:"
+        echo "  - Expired Swarm TLS certificates (often after a long time or incorrect system time)"
+        echo ""
+        echo "Suggested fixes (choose one depending on your setup):"
+        echo "  - Single-node: docker swarm leave --force  (then)  docker swarm init"
+        echo "  - Multi-node: rotate CA and re-join nodes (docker swarm ca --rotate)"
+        echo ""
+        return 1
+    fi
+
     if [ "$swarm_status" != "active" ]; then
         echo "❌ Docker is not in Swarm mode!"
         echo "   Run 'docker swarm init' to initialize a swarm"
@@ -37,6 +57,83 @@ check_docker_swarm() {
 
     echo "✅ Docker Swarm is active"
     return 0
+}
+
+prompt_traefik_network() {
+    # prompt_traefik_network
+    # Lists existing Docker overlay networks and allows selection or creation.
+    # Auto-detects common Traefik network names (traefik, traefik-public, traefik_public).
+    # Returns: network name string via stdout
+    local default_network="${1:-traefik}"
+    local network_name=""
+    local network_selected=false
+    
+    # Get overlay networks
+    local networks=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && networks+=("$line")
+    done < <(docker network ls --filter driver=overlay --format "{{.Name}}" 2>/dev/null)
+
+    if [ ${#networks[@]} -eq 0 ]; then
+        read -r -p "Traefik network name [$default_network]: " input_net
+        echo "${input_net:-$default_network}"
+        return 0
+    fi
+
+    # Auto-detect common Traefik network names
+    local default_selection="1"
+    local detected_network=""
+    local preferred_networks=("traefik-public" "traefik_public" "traefik")
+    
+    for preferred in "${preferred_networks[@]}"; do
+        local idx=0
+        for net in "${networks[@]}"; do
+            if [ "$net" = "$preferred" ]; then
+                detected_network="$net"
+                default_selection="$((idx+1))"
+                break 2
+            fi
+            idx=$((idx+1))
+        done
+    done
+
+    if [ -n "$detected_network" ]; then
+        echo "✅ Auto-detected common Traefik network: $detected_network (recommended)" >&2
+    fi
+
+    echo "" >&2
+    echo "Select the Traefik public overlay network from the list below." >&2
+    echo "Do NOT pick an app-specific network (such as '*_backend')." >&2
+    echo "0) Enter a network name manually" >&2
+
+    local i=1
+    for net in "${networks[@]}"; do
+        if [ -n "$detected_network" ] && [ "$net" = "$detected_network" ]; then
+            echo "$i) ✅ $net (recommended)" >&2
+        else
+            echo "$i) $net" >&2
+        fi
+        i=$((i+1))
+    done
+    echo "" >&2
+
+    local selection
+    read -r -p "Traefik network (number or name) [${default_selection}]: " selection
+    selection="${selection:-${default_selection}}"
+
+    # Check if it's a number
+    if [[ "$selection" =~ ^[0-9]+$ ]]; then
+        if [ "$selection" -eq 0 ]; then
+            read -r -p "Network name [$default_network]: " network_name
+            echo "${network_name:-$default_network}"
+            return 0
+        elif [ "$selection" -ge 1 ] && [ "$selection" -le "${#networks[@]}" ]; then
+            echo "${networks[$((selection-1))]}"
+            return 0
+        fi
+    fi
+
+    echo "$selection"
 }
 
 check_secret_exists() {

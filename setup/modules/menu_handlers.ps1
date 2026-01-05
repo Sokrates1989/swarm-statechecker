@@ -64,75 +64,58 @@ function Update-EnvValue {
     }
 }
 
+function Update-StackImageService {
+    <#
+    .SYNOPSIS
+        Pulls image and updates a specific Swarm service.
+    #>
+    param(
+        [string]$ImageName,
+        [string]$ImageTag,
+        [string[]]$ServiceNames,
+        [string]$EnvKey,
+        [string]$StackName
+    )
+
+    Write-Host "`nPulling: ${ImageName}:$ImageTag" -ForegroundColor Gray
+    try { docker pull "${ImageName}:$ImageTag" 2>$null | Out-Null } catch {}
+
+    Write-Host "`nUpdating services..." -ForegroundColor Gray
+    foreach ($svc in $ServiceNames) {
+        try { docker service update --image "${ImageName}:$ImageTag" "${StackName}_$svc" 2>$null | Out-Null } catch {}
+    }
+
+    Update-EnvValue -EnvFile ".env" -Key $EnvKey -Value $ImageTag | Out-Null
+    Write-Host "[OK] Update initiated. Monitor with: docker stack services $StackName" -ForegroundColor Green
+}
+
 function Update-StackImages {
     <#
     .SYNOPSIS
     Updates Swarm service images for api/check and/or web.
-
-    .DESCRIPTION
-    Pulls the requested image tag and updates the running Swarm services.
-    Persists updated tags back to the local .env file.
-
-    .OUTPUTS
-    System.Void
     #>
     $config = Get-EnvConfig
     Set-ProcessEnvFromConfig -Config $config
 
     $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
+    $imgName = $config["IMAGE_NAME"]; $imgTag = $config["IMAGE_VERSION"]
+    $webName = $config["WEB_IMAGE_NAME"]; $webTag = $config["WEB_IMAGE_VERSION"]
 
-    $imageName = if ($config["IMAGE_NAME"]) { $config["IMAGE_NAME"] } else { "" }
-    $imageTag = if ($config["IMAGE_VERSION"]) { $config["IMAGE_VERSION"] } else { "latest" }
-
-    $webImageName = if ($config["WEB_IMAGE_NAME"]) { $config["WEB_IMAGE_NAME"] } else { "" }
-    $webImageTag = if ($config["WEB_IMAGE_VERSION"]) { $config["WEB_IMAGE_VERSION"] } else { "latest" }
-
-    Write-Host "" 
-    Write-Host "[UPDATE] Update Image Version" -ForegroundColor Cyan
-    Write-Host "" 
-    Write-Host ("1) API/CHECK image ({0}:{1})" -f $imageName, $imageTag) -ForegroundColor Gray
-    Write-Host ("2) WEB image ({0}:{1})" -f $webImageName, $webImageTag) -ForegroundColor Gray
-    Write-Host "3) Back" -ForegroundColor Gray
-    Write-Host "" 
+    Write-Host "`n[UPDATE] Update Image Version`n" -ForegroundColor Cyan
+    Write-Host "1) API/CHECK image ($imgName:$imgTag)" -ForegroundColor Gray
+    Write-Host "2) WEB image ($webName:$webTag)" -ForegroundColor Gray
+    Write-Host "3) Back`n" -ForegroundColor Gray
 
     $choice = Read-Host "Your choice (1-3)"
     switch ($choice) {
         "1" {
-            $newTag = Read-Host "Enter new API/CHECK image tag [$imageTag]"
-            if ([string]::IsNullOrWhiteSpace($newTag)) { $newTag = $imageTag }
-
-            Write-Host "" 
-            Write-Host ("Pulling: {0}:{1}" -f $imageName, $newTag) -ForegroundColor Gray
-            try { docker pull "${imageName}:$newTag" 2>$null | Out-Null } catch {}
-
-            Write-Host "" 
-            Write-Host "Updating services..." -ForegroundColor Gray
-            try { docker service update --image "${imageName}:$newTag" "${stackName}_api" 2>$null | Out-Null } catch {}
-            try { docker service update --image "${imageName}:$newTag" "${stackName}_check" 2>$null | Out-Null } catch {}
-
-            Update-EnvValue -EnvFile ".env" -Key "IMAGE_VERSION" -Value $newTag | Out-Null
-
-            Write-Host "" 
-            Write-Host ("[OK] Update initiated. Monitor with: docker stack services {0}" -f $stackName) -ForegroundColor Green
+            $newTag = Read-Host "Enter new API/CHECK image tag [$imgTag]"
+            Update-StackImageService -ImageName $imgName -ImageTag ($newTag -or $imgTag) -ServiceNames @("api","check") -EnvKey "IMAGE_VERSION" -StackName $stackName
         }
         "2" {
-            $newTag = Read-Host "Enter new WEB image tag [$webImageTag]"
-            if ([string]::IsNullOrWhiteSpace($newTag)) { $newTag = $webImageTag }
-
-            Write-Host "" 
-            Write-Host ("Pulling: {0}:{1}" -f $webImageName, $newTag) -ForegroundColor Gray
-            try { docker pull "${webImageName}:$newTag" 2>$null | Out-Null } catch {}
-
-            Write-Host "" 
-            Write-Host "Updating service..." -ForegroundColor Gray
-            try { docker service update --image "${webImageName}:$newTag" "${stackName}_web" 2>$null | Out-Null } catch {}
-
-            Update-EnvValue -EnvFile ".env" -Key "WEB_IMAGE_VERSION" -Value $newTag | Out-Null
-
-            Write-Host "" 
-            Write-Host ("[OK] Update initiated. Monitor with: docker stack services {0}" -f $stackName) -ForegroundColor Green
+            $newTag = Read-Host "Enter new WEB image tag [$webTag]"
+            Update-StackImageService -ImageName $webName -ImageTag ($newTag -or $webTag) -ServiceNames @("web") -EnvKey "WEB_IMAGE_VERSION" -StackName $stackName
         }
-        Default { return }
     }
 }
 
@@ -187,193 +170,139 @@ function Set-ServiceScale {
     }
 }
 
+function Get-YamlLineIndent {
+    param([string]$Line)
+    $m = [regex]::Match($Line, '^(\s*)')
+    return $m.Groups[1].Value.Length
+}
+
+function Flush-LabelsBuffer {
+    param(
+        [System.Collections.Generic.List[string]]$Output,
+        [System.Collections.Generic.List[string]]$LabelsBuffer,
+        [int]$LabelsIndent,
+        [ref][bool]$InLabelsBlock
+    )
+
+    if (-not $InLabelsBlock.Value) { return }
+
+    $kept = @()
+    foreach ($l in $LabelsBuffer) {
+        if ($l -match '^\s*-\s*traefik\.') { continue }
+        $kept += $l
+    }
+
+    if ($kept.Count -gt 0) {
+        $indentSpaces = ' ' * $LabelsIndent
+        $Output.Add("${indentSpaces}labels:")
+        foreach ($l in $kept) { $Output.Add($l) }
+    }
+
+    $LabelsBuffer.Clear()
+    $InLabelsBlock.Value = $false
+}
+
+function Add-PortsIfMissing {
+    param(
+        [System.Collections.Generic.List[string]]$Output,
+        [string]$Section,
+        [string]$CurrentService,
+        [ref][bool]$WebHasPorts,
+        [ref][bool]$PmaHasPorts,
+        [string]$WebPort,
+        [string]$PmaPort
+    )
+    if ($Section -ne "services") { return }
+
+    if ($CurrentService -eq "web" -and -not $WebHasPorts.Value) {
+        $Output.Add("    ports:")
+        $Output.Add('      - "' + $WebPort + ':80"')
+        $WebHasPorts.Value = $true
+    }
+    if ($CurrentService -eq "phpmyadmin" -and -not $PmaHasPorts.Value) {
+        $Output.Add("    ports:")
+        $Output.Add('      - "' + $PmaPort + ':80"')
+        $PmaHasPorts.Value = $true
+    }
+}
+
 function Convert-RenderedStackToNoProxy {
     <#
     .SYNOPSIS
     Converts a rendered stack YAML to a no-proxy variant.
-
-    .DESCRIPTION
-    Removes Traefik network + labels and exposes direct ports for web + phpMyAdmin.
-
-    .PARAMETER StackFile
-    Path to the rendered stack YAML (usually .stack-deploy-temp.yml).
-
-    .OUTPUTS
-    System.Boolean
     #>
-    param(
-        [Parameter(Mandatory = $true)][string]$StackFile
-    )
+    param([Parameter(Mandatory = $true)][string]$StackFile)
 
     if (-not (Test-Path $StackFile)) {
         Write-Host "[ERROR] Rendered stack file not found: $StackFile" -ForegroundColor Red
         return $false
     }
 
-    $webPort = $env:WEB_PORT
-    if ([string]::IsNullOrWhiteSpace($webPort)) { $webPort = "8080" }
-
-    $pmaPort = $env:PHPMYADMIN_PORT
-    if ([string]::IsNullOrWhiteSpace($pmaPort)) { $pmaPort = "8081" }
+    $webPort = if ($env:WEB_PORT) { $env:WEB_PORT } else { "8080" }
+    $pmaPort = if ($env:PHPMYADMIN_PORT) { $env:PHPMYADMIN_PORT } else { "8081" }
 
     $lines = Get-Content $StackFile -ErrorAction SilentlyContinue
-
     $out = New-Object System.Collections.Generic.List[string]
 
-    $section = ""
-    $currentService = ""
-    $webHasPorts = $false
-    $pmaHasPorts = $false
-
-    $inNetworksSection = $false
-    $skipTraefikNetworkBlock = $false
-    $skipTraefikNetworkIndent = 0
-
-    $inLabelsBlock = $false
-    $labelsIndent = 0
-    $labelsBuffer = New-Object System.Collections.Generic.List[string]
-
-    $getIndentLength = {
-        param([string]$Line)
-        $m = [regex]::Match($Line, '^(\s*)')
-        return $m.Groups[1].Value.Length
-    }
-
-    $flushLabelsBuffer = {
-        param([System.Collections.Generic.List[string]]$Output)
-
-        if (-not $inLabelsBlock) { return }
-
-        $kept = @()
-        foreach ($l in $labelsBuffer) {
-            if ($l -match '^\s*-\s*traefik\.'){ continue }
-            $kept += $l
-        }
-
-        if ($kept.Count -gt 0) {
-            $indentSpaces = ' ' * $labelsIndent
-            $Output.Add("${indentSpaces}labels:")
-            foreach ($l in $kept) { $Output.Add($l) }
-        }
-
-        $labelsBuffer.Clear()
-        $inLabelsBlock = $false
-        $labelsIndent = 0
-    }
-
-    $addPortsIfMissing = {
-        param([System.Collections.Generic.List[string]]$Output)
-        if ($section -ne "services") { return }
-
-        if ($currentService -eq "web" -and -not $webHasPorts) {
-            $Output.Add("    ports:")
-            $Output.Add('      - "' + $webPort + ':80"')
-            $webHasPorts = $true
-        }
-        if ($currentService -eq "phpmyadmin" -and -not $pmaHasPorts) {
-            $Output.Add("    ports:")
-            $Output.Add('      - "' + $pmaPort + ':80"')
-            $pmaHasPorts = $true
-        }
+    $state = @{
+        Section = ""; CurrentService = ""; WebHasPorts = $false; PmaHasPorts = $false;
+        InNetworksSection = $false; SkipTraefikNetworkBlock = $false; SkipTraefikNetworkIndent = 0;
+        InLabelsBlock = $false; LabelsIndent = 0;
+        LabelsBuffer = New-Object System.Collections.Generic.List[string]
     }
 
     foreach ($line in $lines) {
-        $indent = & $getIndentLength $line
+        $indent = Get-YamlLineIndent -Line $line
 
-        if ($skipTraefikNetworkBlock) {
-            if ($indent -le $skipTraefikNetworkIndent -and $line -match '^\s*\S') {
-                $skipTraefikNetworkBlock = $false
+        if ($state.SkipTraefikNetworkBlock) {
+            if ($indent -le $state.SkipTraefikNetworkIndent -and $line -match '^\s*\S') { $state.SkipTraefikNetworkBlock = $false }
+            else { continue }
+        }
+
+        if ($state.InLabelsBlock) {
+            if ($indent -le $state.LabelsIndent -and $line -match '^\s*\S') {
+                $refInLabels = [ref]$state.InLabelsBlock
+                Flush-LabelsBuffer -Output $out -LabelsBuffer $state.LabelsBuffer -LabelsIndent $state.LabelsIndent -InLabelsBlock $refInLabels
             } else {
-                continue
+                $state.LabelsBuffer.Add($line); continue
             }
         }
 
-        if ($inLabelsBlock) {
-            if ($indent -le $labelsIndent -and $line -match '^\s*\S') {
-                & $flushLabelsBuffer $out
-            } else {
-                $labelsBuffer.Add($line)
-                continue
-            }
-        }
-
-        if ($line -match '^services:\s*$') {
-            $section = "services"
-            $currentService = ""
-            $out.Add($line)
-            continue
-        }
-
+        if ($line -match '^services:\s*$') { $state.Section = "services"; $state.CurrentService = ""; $out.Add($line); continue }
         if ($line -match '^networks:\s*$') {
-            & $addPortsIfMissing $out
-            $section = "networks"
-            $currentService = ""
-            $inNetworksSection = $true
-            $out.Add($line)
-            continue
+            Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -WebPort $webPort -PmaPort $pmaPort
+            $state.Section = "networks"; $state.CurrentService = ""; $state.InNetworksSection = $true; $out.Add($line); continue
         }
-
         if ($line -match '^secrets:\s*$') {
-            & $addPortsIfMissing $out
-            $section = "secrets"
-            $currentService = ""
-            $inNetworksSection = $false
-            $out.Add($line)
-            continue
+            Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -WebPort $webPort -PmaPort $pmaPort
+            $state.Section = "secrets"; $state.CurrentService = ""; $state.InNetworksSection = $false; $out.Add($line); continue
         }
 
-        if ($inNetworksSection -and $line -match '^\s{2}traefik:\s*$') {
-            $skipTraefikNetworkBlock = $true
-            $skipTraefikNetworkIndent = $indent
-            continue
-        }
-
+        if ($state.InNetworksSection -and $line -match '^\s{2}traefik:\s*$') { $state.SkipTraefikNetworkBlock = $true; $state.SkipTraefikNetworkIndent = $indent; continue }
         if ($line -match '^\s*-\s*traefik\s*$') { continue }
 
-        if ($section -eq "services" -and $line -match '^\s{2}([A-Za-z0-9_.-]+):\s*$') {
-            & $addPortsIfMissing $out
-
-            $currentService = $matches[1]
-            $webHasPorts = $false
-            $pmaHasPorts = $false
-            $out.Add($line)
-            continue
+        if ($state.Section -eq "services" -and $line -match '^\s{2}([A-Za-z0-9_.-]+):\s*$') {
+            Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -WebPort $webPort -PmaPort $pmaPort
+            $state.CurrentService = $matches[1]; $state.WebHasPorts = $false; $state.PmaHasPorts = $false; $out.Add($line); continue
         }
 
-        if ($section -eq "services" -and $currentService -eq "web" -and $line -match '^\s{4}ports:\s*$') {
-            $webHasPorts = $true
-        }
-        if ($section -eq "services" -and $currentService -eq "phpmyadmin" -and $line -match '^\s{4}ports:\s*$') {
-            $pmaHasPorts = $true
+        if ($state.Section -eq "services" -and $state.CurrentService -eq "web" -and $line -match '^\s{4}ports:\s*$') { $state.WebHasPorts = $true }
+        if ($state.Section -eq "services" -and $state.CurrentService -eq "phpmyadmin" -and $line -match '^\s{4}ports:\s*$') { $state.PmaHasPorts = $true }
+
+        if ($state.Section -eq "services" -and ($state.CurrentService -eq "web" -or $state.CurrentService -eq "phpmyadmin") -and -not ($state.CurrentService -eq "web" -and $state.WebHasPorts) -and -not ($state.CurrentService -eq "phpmyadmin" -and $state.PmaHasPorts) -and $line -match '^\s{4}deploy:\s*$') {
+            Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -WebPort $webPort -PmaPort $pmaPort
         }
 
-        if ($section -eq "services" -and ($currentService -eq "web" -or $currentService -eq "phpmyadmin") -and -not ($currentService -eq "web" -and $webHasPorts) -and -not ($currentService -eq "phpmyadmin" -and $pmaHasPorts) -and $line -match '^\s{4}deploy:\s*$') {
-            & $addPortsIfMissing $out
-        }
-
-        if ($section -eq "services" -and $line -match '^\s{6}labels:\s*$') {
-            $inLabelsBlock = $true
-            $labelsIndent = $indent
-            $labelsBuffer.Clear()
-            continue
-        }
+        if ($state.Section -eq "services" -and $line -match '^\s{6}labels:\s*$') { $state.InLabelsBlock = $true; $state.LabelsIndent = $indent; $state.LabelsBuffer.Clear(); continue }
 
         $out.Add($line)
     }
 
-    if ($inLabelsBlock) {
-        & $flushLabelsBuffer $out
-    }
+    if ($state.InLabelsBlock) { $refInLabels = [ref]$state.InLabelsBlock; Flush-LabelsBuffer -Output $out -LabelsBuffer $state.LabelsBuffer -LabelsIndent $state.LabelsIndent -InLabelsBlock $refInLabels }
+    Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -WebPort $webPort -PmaPort $pmaPort
 
-    & $addPortsIfMissing $out
-
-    try {
-        $out | Set-Content -Path $StackFile -Encoding utf8
-        return $true
-    } catch {
-        Write-Host "[ERROR] Failed to write transformed stack file: $($_.Exception.Message)" -ForegroundColor Red
-        return $false
-    }
+    try { $out | Set-Content -Path $StackFile -Encoding utf8; return $true }
+    catch { Write-Host "[ERROR] Failed to write transformed stack file: $($_.Exception.Message)" -ForegroundColor Red; return $false }
 }
 
 function Set-ProcessEnvFromConfig {
@@ -396,6 +325,70 @@ function Set-ProcessEnvFromConfig {
             [Environment]::SetEnvironmentVariable($key, $value, "Process")
         }
     }
+}
+
+Import-Module "$setupDir\modules\data-dirs.ps1" -Force
+
+function Invoke-EnsureDataDirsBeforeDeploy {
+    <#
+    .SYNOPSIS
+        Ensures DATA_ROOT directories are prepared before deployment.
+    #>
+    if (-not (Test-Path .env)) { return $true }
+
+    $config = Get-EnvConfig
+    $dataRoot = $config["DATA_ROOT"]
+    if ([string]::IsNullOrWhiteSpace($dataRoot)) { return $true }
+
+    $projectRoot = (Get-Location).Path
+    return (Initialize-DataRoot -DataRoot $dataRoot -ProjectRoot $projectRoot)
+}
+
+function Get-ComposeCommand {
+    <#
+    .SYNOPSIS
+        Detects available docker-compose command.
+    #>
+    if (Get-Command docker-compose -ErrorAction SilentlyContinue) {
+        return "docker-compose"
+    } elseif (Get-Command "docker compose" -ErrorAction SilentlyContinue) {
+        # Note: Get-Command might not find "docker compose" as it's a subcommand
+        return "docker compose"
+    }
+    
+    # Fallback check via version
+    try {
+        docker compose version | Out-Null
+        if ($LASTEXITCODE -eq 0) { return "docker compose" }
+    } catch {}
+
+    return $null
+}
+
+function Invoke-RenderStackConfig {
+    <#
+    .SYNOPSIS
+        Renders config-stack.yml using docker compose config.
+    #>
+    param(
+        [string]$ComposeCmd,
+        [string]$EnvFile,
+        [string]$StackFile,
+        [string]$OutputFile
+    )
+
+    $composeSupportsEnvFile = $false
+    try {
+        $helpText = & $ComposeCmd --help 2>$null
+        if ($helpText -match '--env-file') { $composeSupportsEnvFile = $true }
+    } catch {}
+
+    if ((Test-Path $EnvFile) -and $composeSupportsEnvFile) {
+        & $ComposeCmd -f $StackFile --env-file $EnvFile config | Out-File -FilePath $OutputFile -Encoding utf8
+    } else {
+        & $ComposeCmd -f $StackFile config | Out-File -FilePath $OutputFile -Encoding utf8
+    }
+    return $LASTEXITCODE
 }
 
 function Invoke-StackDeploy {
@@ -430,45 +423,22 @@ function Invoke-StackDeploy {
     $envFile = ".env"
     $tempConfig = ".stack-deploy-temp.yml"
 
-    $renderExit = 1
-    if (Get-Command docker-compose -ErrorAction SilentlyContinue) {
-        $composeSupportsEnvFile = $false
-        try {
-            $helpText = docker-compose --help 2>$null
-            if ($helpText -match '--env-file') { $composeSupportsEnvFile = $true }
-        } catch {
-        }
-
-        if ((Test-Path $envFile) -and $composeSupportsEnvFile) {
-            docker-compose -f $stackFile --env-file $envFile config | Out-File -FilePath $tempConfig -Encoding utf8
-        } else {
-            docker-compose -f $stackFile config | Out-File -FilePath $tempConfig -Encoding utf8
-        }
-        $renderExit = $LASTEXITCODE
-    } else {
-        docker compose version 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "[WARN] Neither docker-compose nor 'docker compose' is available. Deploying raw stack file (env substitution may be incomplete)." -ForegroundColor Yellow
-            docker stack deploy -c $stackFile $stackName
-            return
-        }
-
-        if (Test-Path $envFile) {
-            docker compose -f $stackFile --env-file $envFile config | Out-File -FilePath $tempConfig -Encoding utf8
-        } else {
-            docker compose -f $stackFile config | Out-File -FilePath $tempConfig -Encoding utf8
-        }
-        $renderExit = $LASTEXITCODE
+    $composeCmd = Get-ComposeCommand
+    if ($null -eq $composeCmd) {
+        Write-Host "[WARN] Neither docker-compose nor 'docker compose' is available. Deploying raw stack file." -ForegroundColor Yellow
+        docker stack deploy -c $stackFile $stackName
+        return
     }
 
+    $renderExit = Invoke-RenderStackConfig -ComposeCmd $composeCmd -EnvFile $envFile -StackFile $stackFile -OutputFile $tempConfig
+
     if ($renderExit -ne 0) {
-        Write-Host "[ERROR] Failed to render config-stack.yml via docker-compose" -ForegroundColor Red
+        Write-Host "[ERROR] Failed to render $stackFile via $composeCmd" -ForegroundColor Red
         Remove-Item $tempConfig -ErrorAction SilentlyContinue
         return
     }
 
-    $proxyType = if ($config["PROXY_TYPE"]) { $config["PROXY_TYPE"] } else { "traefik" }
-    if ($proxyType -eq "none") {
+    if ($config["PROXY_TYPE"] -eq "none") {
         Write-Host "[INFO] PROXY_TYPE=none: deploying without Traefik (direct ports)" -ForegroundColor Gray
         if (-not (Convert-RenderedStackToNoProxy -StackFile $tempConfig)) {
             Remove-Item $tempConfig -ErrorAction SilentlyContinue
@@ -480,10 +450,8 @@ function Invoke-StackDeploy {
     Remove-Item $tempConfig -ErrorAction SilentlyContinue
     
     if ($LASTEXITCODE -eq 0) {
-        Write-Host ""
-        Write-Host "[OK] Stack deployed: $stackName" -ForegroundColor Green
-        Write-Host ""
-        Write-Host "Stack services:" -ForegroundColor Cyan
+        Write-Host "`n[OK] Stack deployed: $stackName" -ForegroundColor Green
+        Write-Host "`nStack services:" -ForegroundColor Cyan
         docker stack services $stackName
     } else {
         Write-Host "[ERROR] Failed to deploy stack" -ForegroundColor Red
@@ -672,88 +640,103 @@ function New-OptionalSecretsMenu {
     }
 }
 
+function Show-MainMenuText {
+    <#
+    .SYNOPSIS
+        Prints the main menu options.
+    #>
+    param([int]$MENU_EXIT)
+
+    Write-Host "" 
+    Write-Host "================ Main Menu ================" -ForegroundColor Yellow
+    Write-Host "" 
+    Write-Host "Deployment:" -ForegroundColor Yellow
+    Write-Host "  1) Deploy stack" -ForegroundColor Gray
+    Write-Host "  2) Remove stack" -ForegroundColor Gray
+    Write-Host "  3) Show stack status" -ForegroundColor Gray
+    Write-Host "  4) Health check" -ForegroundColor Gray
+    Write-Host "  5) View service logs" -ForegroundColor Gray
+    Write-Host "" 
+    Write-Host "Management:" -ForegroundColor Yellow
+    Write-Host "  6) Update image version" -ForegroundColor Gray
+    Write-Host "  7) Scale services" -ForegroundColor Gray
+    Write-Host "" 
+    Write-Host "Secrets:" -ForegroundColor Yellow
+    Write-Host "  8) Check required secrets" -ForegroundColor Gray
+    Write-Host "  9) Create required secrets" -ForegroundColor Gray
+    Write-Host "  10) Create secrets from secrets.env file" -ForegroundColor Gray
+    Write-Host "  11) Create optional secrets (Telegram, Email)" -ForegroundColor Gray
+    Write-Host "  12) List all secrets" -ForegroundColor Gray
+    Write-Host "" 
+    Write-Host "Setup:" -ForegroundColor Yellow
+    Write-Host "  13) Re-run setup wizard" -ForegroundColor Gray
+    Write-Host "" 
+    Write-Host "Extras:" -ForegroundColor Yellow
+    Write-Host "  14) Toggle phpMyAdmin (enable/disable)" -ForegroundColor Gray
+    Write-Host "" 
+    Write-Host "CI/CD:" -ForegroundColor Yellow
+    Write-Host "  15) GitHub Actions CI/CD helper" -ForegroundColor Gray
+    Write-Host "" 
+    Write-Host "  $MENU_EXIT) Exit" -ForegroundColor Gray
+    Write-Host "" 
+}
+
+function Handle-MenuChoice {
+    <#
+    .SYNOPSIS
+        Dispatches menu choices to appropriate functions.
+    #>
+    param(
+        [string]$Choice,
+        [int]$MENU_EXIT,
+        [string]$setupDir
+    )
+
+    switch ($Choice) {
+        "1" {
+            Write-Host "[DEPLOY] Deploying stack..." -ForegroundColor Cyan
+            if (-not (Invoke-EnsureDataDirsBeforeDeploy)) { return }
+            Invoke-StackDeploy
+        }
+        "2" { Remove-Stack }
+        "3" { Show-StackStatus }
+        "4" {
+            $config = Get-EnvConfig
+            Set-ProcessEnvFromConfig -Config $config
+            $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
+            $proxyType = if ($config["PROXY_TYPE"]) { $config["PROXY_TYPE"] } else { "traefik" }
+            Test-DeploymentHealth -StackName $stackName -ProxyType $proxyType -WaitSeconds 10 | Out-Null
+        }
+        "5" { Show-ServiceLogs }
+        "6" { Update-StackImages }
+        "7" { Set-ServiceScale }
+        "8" { Test-RequiredSecrets; Test-OptionalSecrets }
+        "9" { New-RequiredSecretsMenu }
+        "10" { New-SecretsFromFile -SecretsFile "secrets.env" -TemplateFile "setup\secrets.env.template" | Out-Null }
+        "11" { New-OptionalSecretsMenu }
+        "12" { Get-SecretList }
+        "13" {
+            $wizardPath = Join-Path $setupDir "setup-wizard.ps1"
+            if (Test-Path $wizardPath) { & $wizardPath }
+            else { Write-Host "[ERROR] Setup wizard not found: $wizardPath" -ForegroundColor Red }
+        }
+        "14" { Invoke-PhpMyAdminToggle }
+        "15" { Invoke-GitHubCICDHelper }
+        "$MENU_EXIT" { Write-Host "Goodbye!" -ForegroundColor Cyan; exit 0 }
+        Default { Write-Host "[ERROR] Invalid selection" -ForegroundColor Yellow }
+    }
+}
+
 function Show-MainMenu {
     <#
     .SYNOPSIS
     Main interactive menu loop.
     #>
     while ($true) {
-        $menuNext = 1
-        $MENU_DEPLOY = $menuNext; $menuNext++
-        $MENU_REMOVE = $menuNext; $menuNext++
-        $MENU_STATUS = $menuNext; $menuNext++
-        $MENU_HEALTH = $menuNext; $menuNext++
-        $MENU_LOGS = $menuNext; $menuNext++
-
-        $MENU_UPDATE_IMAGE = $menuNext; $menuNext++
-        $MENU_SCALE = $menuNext; $menuNext++
-
-        $MENU_SECRETS_CHECK = $menuNext; $menuNext++
-        $MENU_SECRETS_CREATE_REQUIRED = $menuNext; $menuNext++
-        $MENU_SECRETS_FROM_FILE = $menuNext; $menuNext++
-        $MENU_SECRETS_CREATE_OPTIONAL = $menuNext; $menuNext++
-        $MENU_SECRETS_LIST = $menuNext; $menuNext++
-
-        $MENU_TOGGLE_PHPMYADMIN = $menuNext; $menuNext++
-
-        $MENU_CICD = $menuNext; $menuNext++
-
-        $MENU_EXIT = $menuNext
-
-        Write-Host "" 
-        Write-Host "================ Main Menu ================" -ForegroundColor Yellow
-        Write-Host "" 
-        Write-Host "Deployment:" -ForegroundColor Yellow
-        Write-Host "  $MENU_DEPLOY) Deploy stack" -ForegroundColor Gray
-        Write-Host "  $MENU_REMOVE) Remove stack" -ForegroundColor Gray
-        Write-Host "  $MENU_STATUS) Show stack status" -ForegroundColor Gray
-        Write-Host "  $MENU_HEALTH) Health check" -ForegroundColor Gray
-        Write-Host "  $MENU_LOGS) View service logs" -ForegroundColor Gray
-        Write-Host "" 
-        Write-Host "Management:" -ForegroundColor Yellow
-        Write-Host "  $MENU_UPDATE_IMAGE) Update image version" -ForegroundColor Gray
-        Write-Host "  $MENU_SCALE) Scale services" -ForegroundColor Gray
-        Write-Host "  $MENU_TOGGLE_PHPMYADMIN) Toggle phpMyAdmin (enable/disable)" -ForegroundColor Gray
-        Write-Host "" 
-        Write-Host "Secrets:" -ForegroundColor Yellow
-        Write-Host "  $MENU_SECRETS_CHECK) Check required secrets" -ForegroundColor Gray
-        Write-Host "  $MENU_SECRETS_CREATE_REQUIRED) Create required secrets" -ForegroundColor Gray
-        Write-Host "  $MENU_SECRETS_FROM_FILE) Create secrets from secrets.env file" -ForegroundColor Gray
-        Write-Host "  $MENU_SECRETS_CREATE_OPTIONAL) Create optional secrets (Telegram, Email)" -ForegroundColor Gray
-        Write-Host "  $MENU_SECRETS_LIST) List all secrets" -ForegroundColor Gray
-        Write-Host "" 
-        Write-Host "CI/CD:" -ForegroundColor Yellow
-        Write-Host "  $MENU_CICD) GitHub Actions CI/CD helper" -ForegroundColor Gray
-        Write-Host "" 
-        Write-Host "  $MENU_EXIT) Exit" -ForegroundColor Gray
-        Write-Host "" 
-
+        $MENU_EXIT = 16
+        Show-MainMenuText -MENU_EXIT $MENU_EXIT
         $choice = Read-Host "Your choice (1-$MENU_EXIT)"
-
-        switch ($choice) {
-            "$MENU_DEPLOY" { Invoke-StackDeploy }
-            "$MENU_REMOVE" { Remove-Stack }
-            "$MENU_STATUS" { Show-StackStatus }
-            "$MENU_HEALTH" {
-                $config = Get-EnvConfig
-                Set-ProcessEnvFromConfig -Config $config
-                $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker-server" }
-                $proxyType = if ($config["PROXY_TYPE"]) { $config["PROXY_TYPE"] } else { "traefik" }
-                Test-DeploymentHealth -StackName $stackName -ProxyType $proxyType -WaitSeconds 10 | Out-Null
-            }
-            "$MENU_LOGS" { Show-ServiceLogs }
-            "$MENU_UPDATE_IMAGE" { Update-StackImages }
-            "$MENU_SCALE" { Set-ServiceScale }
-            "$MENU_SECRETS_CHECK" { Test-RequiredSecrets; Test-OptionalSecrets }
-            "$MENU_SECRETS_CREATE_REQUIRED" { New-RequiredSecretsMenu }
-            "$MENU_SECRETS_FROM_FILE" { New-SecretsFromFile -SecretsFile "secrets.env" -TemplateFile "setup\secrets.env.template" | Out-Null }
-            "$MENU_SECRETS_CREATE_OPTIONAL" { New-OptionalSecretsMenu }
-            "$MENU_SECRETS_LIST" { Get-SecretList }
-            "$MENU_TOGGLE_PHPMYADMIN" { Invoke-PhpMyAdminToggle }
-            "$MENU_CICD" { Invoke-GitHubCICDHelper }
-            "$MENU_EXIT" { Write-Host "Goodbye!" -ForegroundColor Cyan; exit 0 }
-            Default { Write-Host "[ERROR] Invalid selection" -ForegroundColor Yellow }
-        }
+        Handle-MenuChoice -Choice $choice -MENU_EXIT $MENU_EXIT -setupDir $setupDir
     }
 }
 

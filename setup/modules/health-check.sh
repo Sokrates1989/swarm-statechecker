@@ -4,59 +4,11 @@
 #
 # Deployment health check helpers for Swarm Statechecker.
 
-check_deployment_health() {
-    # check_deployment_health
-    # Runs a simple deployment health check for the stack.
-    #
-    # Arguments:
-    # - $1: stack name
-    # - $2: proxy type (traefik|none)
-    # - $3: wait seconds (optional, default: 0)
-    # - $4: logs since (optional, default: 10m)
-    # - $5: logs tail (optional, default: 200)
-    local stack_name="$1"
-    local proxy_type="$2"
-    local wait_seconds="${3:-0}"
-    local logs_since="${4:-10m}"
-    local logs_tail="${5:-200}"
-
-    if [ -z "$stack_name" ]; then
-        echo "❌ Stack name is required"
-        return 1
-    fi
-
-    echo ""
-    echo "[HEALTH] Deployment Health Check"
-    echo "================================="
-    echo ""
-
-    if [ "$wait_seconds" -gt 0 ] 2>/dev/null; then
-        echo "[WAIT] Waiting ${wait_seconds}s for services to initialize..."
-        sleep "$wait_seconds"
-        echo ""
-    fi
-
-    echo "[STATUS] Stack services:"
-    docker stack services "$stack_name" 2>/dev/null
-    if [ $? -ne 0 ]; then
-        echo "[ERROR] Stack '$stack_name' not found"
-        return 1
-    fi
-
-    echo ""
-    echo "[TASKS] Service tasks:"
-    docker stack ps "$stack_name" --format "table {{.Name}}\t{{.CurrentState}}\t{{.Error}}" 2>/dev/null || true
-
-    local failed_tasks
-    failed_tasks=$(docker stack ps "$stack_name" --format "{{.CurrentState}}" 2>/dev/null | grep -E "Failed|Rejected" | wc -l 2>/dev/null)
-    failed_tasks=${failed_tasks:-0}
-
-    if [ "$failed_tasks" -gt 0 ] 2>/dev/null; then
-        echo ""
-        echo "[WARN] $failed_tasks task(s) have failed"
-        echo "       Check logs via the logs menu or: docker service logs ${stack_name}_api"
-    fi
-
+_print_deployment_endpoints() {
+    # _print_deployment_endpoints
+    # Prints endpoint URLs based on proxy type.
+    local proxy_type="$1"
+    
     echo ""
     echo "[ENDPOINTS]"
 
@@ -72,16 +24,48 @@ check_deployment_health() {
             echo "PMA:  http://localhost:${pma_port}"
         fi
     else
-        if [ -n "${API_URL:-}" ]; then
-            echo "API:  https://${API_URL}"
-        fi
-        if [ -n "${WEB_URL:-}" ]; then
-            echo "WEB:  https://${WEB_URL}"
-        fi
+        [ -n "${API_URL:-}" ] && echo "API:  https://${API_URL}"
+        [ -n "${WEB_URL:-}" ] && echo "WEB:  https://${WEB_URL}"
         if [ "${PHPMYADMIN_REPLICAS:-0}" != "0" ] && [ -n "${PHPMYADMIN_URL:-}" ]; then
             echo "PMA:  https://${PHPMYADMIN_URL}"
         fi
     fi
+}
+
+check_deployment_health() {
+    # check_deployment_health
+    # Runs a simple deployment health check for the stack.
+    local stack_name="$1"
+    local proxy_type="$2"
+    local wait_seconds="${3:-0}"
+    local logs_since="${4:-10m}"
+    local logs_tail="${5:-200}"
+
+    [ -z "$stack_name" ] && { echo "❌ Stack name is required"; return 1; }
+
+    echo ""
+    echo "[HEALTH] Deployment Health Check"
+    echo "================================="
+    echo ""
+
+    if [ "$wait_seconds" -gt 0 ] 2>/dev/null; then
+        echo "[WAIT] Waiting ${wait_seconds}s for services to initialize..."
+        sleep "$wait_seconds"
+        echo ""
+    fi
+
+    echo "[STATUS] Stack services:"
+    docker stack services "$stack_name" 2>/dev/null || { echo "[ERROR] Stack '$stack_name' not found"; return 1; }
+
+    echo ""
+    echo "[TASKS] Service tasks:"
+    docker stack ps "$stack_name" --format "table {{.Name}}\t{{.CurrentState}}\t{{.Error}}" 2>/dev/null || true
+
+    local failed_tasks
+    failed_tasks=$(docker stack ps "$stack_name" --format "{{.CurrentState}}" 2>/dev/null | grep -E "Failed|Rejected" | wc -l 2>/dev/null)
+    [ "${failed_tasks:-0}" -gt 0 ] && { echo ""; echo "[WARN] $failed_tasks task(s) have failed"; echo "       Check logs via the logs menu or: docker service logs ${stack_name}_api"; }
+
+    _print_deployment_endpoints "$proxy_type"
 
     echo ""
     echo "[LOGS] Recent logs (since=${logs_since}, tail=${logs_tail})"
