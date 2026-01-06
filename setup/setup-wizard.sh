@@ -15,6 +15,7 @@ source "$SCRIPT_DIR/modules/menu_handlers.sh"
 source "$SCRIPT_DIR/modules/health-check.sh"
 source "$SCRIPT_DIR/modules/data-dirs.sh"
 source "$SCRIPT_DIR/modules/wizard.sh"
+source "$SCRIPT_DIR/modules/config-builder.sh"
 
 is_setup_complete() {
     # is_setup_complete
@@ -73,23 +74,27 @@ _expand_website_to_monitor_urls() {
 
 ensure_env_file() {
     # ensure_env_file
-    # Ensures a .env exists in the project root.
+    # Ensures a .env exists in the project root using modular templates.
+    #
+    # Arguments:
+    # - $1: proxy_type (traefik or none)
     #
     # Returns:
     # - 0 on success
     # - 1 on failure
+    local proxy_type="${1:-traefik}"
+    
     if [ -f "$PROJECT_ROOT/.env" ]; then
         return 0
     fi
 
-    if [ ! -f "$SCRIPT_DIR/.env.template" ]; then
-        echo "❌ Missing env template: $SCRIPT_DIR/.env.template"
+    if [ ! -f "$SCRIPT_DIR/env-templates/.env.base.template" ]; then
+        echo "❌ Missing env template: $SCRIPT_DIR/env-templates/.env.base.template"
         return 1
     fi
 
-    cp "$SCRIPT_DIR/.env.template" "$PROJECT_ROOT/.env"
+    build_env_file "$proxy_type" "$PROJECT_ROOT"
     update_env_values "$PROJECT_ROOT/.env" "DATA_ROOT" "$PROJECT_ROOT"
-    echo "✅ Created .env from template"
     return 0
 }
 
@@ -129,9 +134,48 @@ _prompt_domain_with_validation() {
     done
 }
 
+_prompt_ssl_mode() {
+    # _prompt_ssl_mode
+    # Prompts for SSL termination mode when using Traefik.
+    #
+    # Returns:
+    # - "direct" if Traefik handles SSL directly (Let's Encrypt)
+    # - "proxy" if Traefik is behind another TLS terminator
+    local current_ssl_mode="$1"
+    
+    echo ""
+    echo "[CONFIG] SSL Termination Mode"
+    echo "------------------------------"
+    echo "How is SSL/TLS handled in your setup?"
+    echo "1) direct - Traefik handles SSL directly (uses Let's Encrypt)"
+    echo "2) proxy  - Traefik is behind another TLS terminator (e.g., Nginx Proxy Manager)"
+    echo ""
+    
+    local default_choice="1"
+    if [ "$current_ssl_mode" = "proxy" ]; then
+        default_choice="2"
+    fi
+    
+    read_prompt "Your choice (1-2) [$default_choice]: " ssl_choice
+    ssl_choice="${ssl_choice:-$default_choice}"
+    
+    if [ "$ssl_choice" = "2" ]; then
+        echo "proxy"
+    else
+        echo "direct"
+    fi
+}
+
 _prompt_proxy_config() {
     # _prompt_proxy_config
     # Prompts for proxy-related configuration based on selected proxy type.
+    #
+    # Arguments:
+    # - $1: env_file path
+    # - $2: proxy_type (traefik or none)
+    #
+    # Returns (via global):
+    # - Sets SSL_MODE variable for later use in stack generation
     local env_file="$1"
     local proxy_type="$2"
 
@@ -145,16 +189,22 @@ _prompt_proxy_config() {
         
         read_prompt "PHPMYADMIN_PORT (localhost) [${current_pma_port:-8081}]: " pma_port
         update_env_values "$env_file" "PHPMYADMIN_PORT" "${pma_port:-${current_pma_port:-8081}}"
+        
+        SSL_MODE=""
     else
-        local current_traefik current_api_url current_web_url current_pma_url
-        current_traefik=$(grep '^TRAEFIK_NETWORK_NAME=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
-        current_api_url=$(grep '^API_URL=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
-        current_web_url=$(grep '^WEB_URL=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
-        current_pma_url=$(grep '^PHPMYADMIN_URL=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+        local current_traefik current_api_domain current_web_domain current_pma_domain current_ssl_mode
+        current_traefik=$(grep '^TRAEFIK_NETWORK=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+        current_api_domain=$(grep '^API_DOMAIN=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+        current_web_domain=$(grep '^WEB_DOMAIN=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+        current_pma_domain=$(grep '^PHPMYADMIN_DOMAIN=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+        current_ssl_mode=$(grep '^SSL_MODE=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
 
         local traefik_network
         traefik_network=$(prompt_traefik_network "${current_traefik:-traefik}")
-        update_env_values "$env_file" "TRAEFIK_NETWORK_NAME" "$traefik_network"
+        update_env_values "$env_file" "TRAEFIK_NETWORK" "$traefik_network"
+
+        SSL_MODE=$(_prompt_ssl_mode "${current_ssl_mode:-direct}")
+        update_env_values "$env_file" "SSL_MODE" "$SSL_MODE"
 
         echo ""
         echo "[CONFIG] Domain Configuration for Traefik"
@@ -163,17 +213,17 @@ _prompt_proxy_config() {
         echo "pointing to your server (e.g., api.statechecker.example.com)."
         echo ""
 
-        local api_url
-        api_url=$(_prompt_domain_with_validation "API_URL (Traefik Host)" "${current_api_url:-api.statechecker.domain.de}" "api.statechecker.example.com")
-        update_env_values "$env_file" "API_URL" "$api_url"
+        local api_domain
+        api_domain=$(_prompt_domain_with_validation "API_DOMAIN (Traefik Host)" "${current_api_domain:-api.statechecker.domain.de}" "api.statechecker.example.com")
+        update_env_values "$env_file" "API_DOMAIN" "$api_domain"
 
-        local web_url
-        web_url=$(_prompt_domain_with_validation "WEB_URL (Traefik Host)" "${current_web_url:-statechecker.domain.de}" "statechecker.example.com")
-        update_env_values "$env_file" "WEB_URL" "$web_url"
+        local web_domain
+        web_domain=$(_prompt_domain_with_validation "WEB_DOMAIN (Traefik Host)" "${current_web_domain:-statechecker.domain.de}" "statechecker.example.com")
+        update_env_values "$env_file" "WEB_DOMAIN" "$web_domain"
 
-        local pma_url
-        pma_url=$(_prompt_domain_with_validation "PHPMYADMIN_URL (Traefik Host)" "${current_pma_url:-pma.statechecker.domain.de}" "pma.statechecker.example.com")
-        update_env_values "$env_file" "PHPMYADMIN_URL" "$pma_url"
+        local pma_domain
+        pma_domain=$(_prompt_domain_with_validation "PHPMYADMIN_DOMAIN (Traefik Host)" "${current_pma_domain:-pma.statechecker.domain.de}" "pma.statechecker.example.com")
+        update_env_values "$env_file" "PHPMYADMIN_DOMAIN" "$pma_domain"
 
         local current_pma_replicas
         current_pma_replicas=$(grep '^PHPMYADMIN_REPLICAS=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
@@ -486,28 +536,34 @@ main() {
         STACK_NAME="${STACK_NAME:-statechecker}"
         DATA_ROOT="${DATA_ROOT:-$PROJECT_ROOT}"
         PROXY_TYPE="${PROXY_TYPE:-traefik}"
+        SSL_MODE="${SSL_MODE:-direct}"
 
         update_env_values "$PROJECT_ROOT/.env" "STACK_NAME" "$STACK_NAME"
         update_env_values "$PROJECT_ROOT/.env" "DATA_ROOT" "$DATA_ROOT"
         update_env_values "$PROJECT_ROOT/.env" "PROXY_TYPE" "$PROXY_TYPE"
 
         if [ "$PROXY_TYPE" = "traefik" ]; then
-            if [ -z "${TRAEFIK_NETWORK_NAME:-}" ]; then
+            if [ -z "${TRAEFIK_NETWORK:-}" ]; then
                 traefik_network=$(prompt_traefik_network "traefik")
-                update_env_values "$PROJECT_ROOT/.env" "TRAEFIK_NETWORK_NAME" "$traefik_network"
+                update_env_values "$PROJECT_ROOT/.env" "TRAEFIK_NETWORK" "$traefik_network"
             fi
 
-            if [ -z "${API_URL:-}" ]; then
-                api_url=$(_prompt_domain_with_validation "API_URL (Traefik Host)" "api.statechecker.domain.de" "api.statechecker.example.com")
-                update_env_values "$PROJECT_ROOT/.env" "API_URL" "$api_url"
+            if [ -z "${SSL_MODE:-}" ]; then
+                SSL_MODE=$(_prompt_ssl_mode "direct")
+                update_env_values "$PROJECT_ROOT/.env" "SSL_MODE" "$SSL_MODE"
             fi
-            if [ -z "${WEB_URL:-}" ]; then
-                web_url=$(_prompt_domain_with_validation "WEB_URL (Traefik Host)" "statechecker.domain.de" "statechecker.example.com")
-                update_env_values "$PROJECT_ROOT/.env" "WEB_URL" "$web_url"
+
+            if [ -z "${API_DOMAIN:-}" ]; then
+                api_domain=$(_prompt_domain_with_validation "API_DOMAIN (Traefik Host)" "api.statechecker.domain.de" "api.statechecker.example.com")
+                update_env_values "$PROJECT_ROOT/.env" "API_DOMAIN" "$api_domain"
             fi
-            if [ -z "${PHPMYADMIN_URL:-}" ]; then
-                pma_url=$(_prompt_domain_with_validation "PHPMYADMIN_URL (Traefik Host)" "pma.statechecker.domain.de" "pma.statechecker.example.com")
-                update_env_values "$PROJECT_ROOT/.env" "PHPMYADMIN_URL" "$pma_url"
+            if [ -z "${WEB_DOMAIN:-}" ]; then
+                web_domain=$(_prompt_domain_with_validation "WEB_DOMAIN (Traefik Host)" "statechecker.domain.de" "statechecker.example.com")
+                update_env_values "$PROJECT_ROOT/.env" "WEB_DOMAIN" "$web_domain"
+            fi
+            if [ -z "${PHPMYADMIN_DOMAIN:-}" ]; then
+                pma_domain=$(_prompt_domain_with_validation "PHPMYADMIN_DOMAIN (Traefik Host)" "pma.statechecker.domain.de" "pma.statechecker.example.com")
+                update_env_values "$PROJECT_ROOT/.env" "PHPMYADMIN_DOMAIN" "$pma_domain"
             fi
         fi
 
@@ -527,6 +583,20 @@ main() {
     data_root=$(grep '^DATA_ROOT=' "$PROJECT_ROOT/.env" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
 
     prepare_data_root "$data_root" "$PROJECT_ROOT" || exit 1
+
+    # Read final proxy/SSL settings for stack generation
+    local proxy_type ssl_mode include_pma
+    proxy_type=$(grep '^PROXY_TYPE=' "$PROJECT_ROOT/.env" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    ssl_mode=$(grep '^SSL_MODE=' "$PROJECT_ROOT/.env" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    local pma_replicas
+    pma_replicas=$(grep '^PHPMYADMIN_REPLICAS=' "$PROJECT_ROOT/.env" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    include_pma="true"
+    [ "${pma_replicas:-0}" = "0" ] && include_pma="false"
+
+    echo ""
+    echo "[BUILD] Generating swarm-stack.yml from templates..."
+    backup_existing_files "$PROJECT_ROOT"
+    build_stack_file "${proxy_type:-traefik}" "$PROJECT_ROOT" "${ssl_mode:-direct}" "$include_pma" "true"
 
     echo ""
     echo "=========================="

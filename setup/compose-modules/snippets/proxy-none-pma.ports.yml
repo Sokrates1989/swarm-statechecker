@@ -1,0 +1,2 @@
+    ports:
+      - "${PHPMYADMIN_PORT}:80"

@@ -1,0 +1,2 @@
+  ${TRAEFIK_NETWORK}:
+    external: true

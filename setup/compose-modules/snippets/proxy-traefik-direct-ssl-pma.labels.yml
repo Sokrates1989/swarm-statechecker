@@ -1,0 +1,14 @@
+      labels:
+        - traefik.enable=true
+        - traefik.constraint-label=traefik-public
+        - traefik.docker.network=${TRAEFIK_NETWORK}
+        - traefik.http.routers.${STACK_NAME}_phpmyadmin.service=${STACK_NAME}_phpmyadmin
+        - traefik.http.services.${STACK_NAME}_phpmyadmin.loadbalancer.server.port=80
+        - traefik.http.routers.${STACK_NAME}_phpmyadmin.rule=Host(`${PHPMYADMIN_DOMAIN}`)
+        - traefik.http.routers.${STACK_NAME}_phpmyadmin.entrypoints=https
+        - traefik.http.routers.${STACK_NAME}_phpmyadmin.tls=true
+        - traefik.http.routers.${STACK_NAME}_phpmyadmin.tls.certresolver=le
+        - traefik.http.middlewares.${STACK_NAME}_pma_protoheader.headers.customrequestheaders.X-Forwarded-Proto=https
+        - traefik.http.middlewares.${STACK_NAME}_pma_protoheader.headers.customrequestheaders.X-Forwarded-Port=443
+        - traefik.http.routers.${STACK_NAME}_phpmyadmin.middlewares=${STACK_NAME}_pma_protoheader
+

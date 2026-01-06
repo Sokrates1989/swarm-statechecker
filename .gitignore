@@ -16,6 +16,12 @@ secrets.env
 # Wizard editor preference
 .wizard-editor
 
+# Generated stack file (created by wizard from templates)
+swarm-stack.yml
+
+# Backup directories (created by wizard)
+backup/
+
 # Temporary rendered stack file (created during deploy)
 .stack-deploy-temp.yml
 

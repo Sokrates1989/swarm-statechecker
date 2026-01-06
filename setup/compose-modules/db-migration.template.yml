@@ -1,0 +1,19 @@
+
+  # Database Migration Service (one-shot)
+  db-migration:
+    image: mysql:8.4
+    environment:
+      - MYSQL_DATABASE=state_checker
+      - MYSQL_USER=state_checker
+      - MYSQL_HOST=${STACK_NAME}_db
+    secrets:
+      - STATECHECKER_SERVER_DB_USER_PW
+    networks:
+      - backend
+    volumes:
+      - ${DATA_ROOT}/install/database/migrations:/scripts
+    entrypoint: ["/bin/bash", "/scripts/run_migrations.sh"]
+    deploy:
+      restart_policy:
+        condition: none
+

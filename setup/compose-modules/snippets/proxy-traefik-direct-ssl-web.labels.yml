@@ -1,0 +1,13 @@
+      labels:
+        - traefik.enable=true
+        - traefik.constraint-label=traefik-public
+        - traefik.docker.network=${TRAEFIK_NETWORK}
+        - traefik.http.routers.${STACK_NAME}_web.service=${STACK_NAME}_web
+        - traefik.http.services.${STACK_NAME}_web.loadbalancer.server.port=80
+        - traefik.http.routers.${STACK_NAME}_web.rule=Host(`${WEB_DOMAIN}`)
+        - traefik.http.routers.${STACK_NAME}_web.entrypoints=https
+        - traefik.http.routers.${STACK_NAME}_web.tls=true
+        - traefik.http.routers.${STACK_NAME}_web.tls.certresolver=le
+        - traefik.http.middlewares.${STACK_NAME}_web_protoheader.headers.customrequestheaders.X-Forwarded-Proto=https
+        - traefik.http.routers.${STACK_NAME}_web.middlewares=${STACK_NAME}_web_protoheader
+

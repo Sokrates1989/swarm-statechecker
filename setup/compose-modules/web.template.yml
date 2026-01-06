@@ -1,0 +1,21 @@
+
+  # Statechecker Web Service (Nginx frontend)
+  web:
+    image: ${WEB_IMAGE_NAME}:${WEB_IMAGE_VERSION}
+    environment:
+      - API_UPSTREAM=${STACK_NAME}_api:${API_PORT}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - backend
+###PROXY_NETWORK_WEB###
+    deploy:
+###PROXY_LABELS_WEB###
+###PROXY_PORTS_WEB###
+      mode: replicated
+      replicas: ${WEB_REPLICAS:-1}
+

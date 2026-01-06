@@ -1,0 +1,21 @@
+
+  # MySQL Database Service
+  db:
+    image: mysql:8
+    environment:
+      - MYSQL_DATABASE=state_checker
+      - MYSQL_USER=state_checker
+      - MYSQL_PASSWORD_FILE=/run/secrets/STATECHECKER_SERVER_DB_USER_PW
+      - MYSQL_ROOT_PASSWORD_FILE=/run/secrets/STATECHECKER_SERVER_DB_ROOT_USER_PW
+    secrets:
+      - STATECHECKER_SERVER_DB_USER_PW
+      - STATECHECKER_SERVER_DB_ROOT_USER_PW
+    networks:
+      - backend
+    volumes:
+      - ${DATA_ROOT}/db_data:/var/lib/mysql
+      - ${DATA_ROOT}/install/database/state_checker.sql:/docker-entrypoint-initdb.d/init.sql
+    deploy:
+      mode: replicated
+      replicas: 1
+

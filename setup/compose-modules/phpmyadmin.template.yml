@@ -1,0 +1,15 @@
+
+  # phpMyAdmin for MySQL Database Management
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    environment:
+      - PMA_HOST=${STACK_NAME}_db
+    networks:
+      - backend
+###PROXY_NETWORK_PMA###
+###PROXY_PORTS_PMA###
+    deploy:
+###PROXY_LABELS_PMA###
+      mode: replicated
+      replicas: ${PHPMYADMIN_REPLICAS:-0}
+

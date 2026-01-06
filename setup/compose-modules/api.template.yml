@@ -1,0 +1,38 @@
+
+  # Statechecker API Service
+  api:
+    image: ${IMAGE_NAME}:${IMAGE_VERSION}
+    environment:
+      # API Authentication.
+      - SERVER_AUTHENTICATION_TOKEN_FILE=/run/secrets/STATECHECKER_SERVER_AUTHENTICATION_TOKEN
+      - SERVER_AUTHENTICATION_TOKEN=${SERVER_AUTHENTICATION_TOKEN}
+      # Logging.
+      - TIMEZONE=${TIMEZONE}
+      # Database connection.
+      - DB_HOST=${STACK_NAME}_db
+      - DB_USER=state_checker
+      - DB_PW_FILE=/run/secrets/STATECHECKER_SERVER_DB_USER_PW
+      - DB_NAME=state_checker
+      # Config file with website, folders and tools to check.
+      - STATECHECKER_SERVER_CONFIG=${STATECHECKER_SERVER_CONFIG}
+    secrets:
+      - STATECHECKER_SERVER_AUTHENTICATION_TOKEN
+      - STATECHECKER_SERVER_DB_USER_PW
+    networks:
+      - backend
+###PROXY_NETWORK###
+    volumes:
+      - ${DATA_ROOT}/logs/api:/code/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:${API_PORT}/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+###PROXY_LABELS###
+###PROXY_PORTS###
+      mode: replicated
+      replicas: ${API_REPLICAS:-1}
+    command: ["uvicorn", "main_api_startpoint:app", "--host", "0.0.0.0", "--port", "${API_PORT}"]
+

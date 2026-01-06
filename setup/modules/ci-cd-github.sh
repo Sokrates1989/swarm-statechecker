@@ -185,7 +185,6 @@ run_ci_cd_github_helper() {
     default_image_name=$(_ci_cd_github_get_env_value "$env_file" "IMAGE_NAME")
 
     local default_stack_file="swarm-stack.yml"
-    [ -f "config-stack.yml" ] && default_stack_file="config-stack.yml"
     [ -f "docker-compose.yml" ] && default_stack_file="docker-compose.yml"
 
     if [ "$env_choice" = "1" ] || [ "$env_choice" = "3" ]; then

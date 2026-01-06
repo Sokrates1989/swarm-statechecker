@@ -1,0 +1,20 @@
+
+networks:
+  backend:
+    driver: overlay
+###TRAEFIK_NETWORK###
+
+secrets:
+  "STATECHECKER_SERVER_AUTHENTICATION_TOKEN":
+    external: true
+  "STATECHECKER_SERVER_DB_USER_PW":
+    external: true
+  "STATECHECKER_SERVER_DB_ROOT_USER_PW":
+    external: true
+  "STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON":
+    external: true
+  "STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN":
+    external: true
+  "STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD":
+    external: true
+

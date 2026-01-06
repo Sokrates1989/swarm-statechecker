@@ -20,6 +20,7 @@ source "${SETUP_DIR}/modules/ci-cd-github.sh"
 source "${SETUP_DIR}/modules/health-check.sh"
 source "${SETUP_DIR}/modules/menu_handlers.sh"
 source "${SETUP_DIR}/modules/wizard.sh"
+source "${SETUP_DIR}/modules/config-builder.sh"
 
 echo "🔍 Swarm Statechecker - Quick Start"
 echo "===================================="
@@ -40,8 +41,8 @@ if [ ! -f .setup-complete ]; then
             wizard_choose_editor || exit 1
         fi
 
-        if [ ! -f .env ] && [ -f setup/.env.template ]; then
-            cp setup/.env.template .env
+        if [ ! -f .env ] && [ -f setup/env-templates/.env.base.template ]; then
+            build_env_file "traefik" "$SCRIPT_DIR"
         fi
         if [ -f .env ]; then
             wizard_edit_file "$(pwd)/.env" "$WIZARD_EDITOR"
@@ -87,16 +88,20 @@ echo ""
 if [ ! -f .env ]; then
     echo "⚠️  .env file not found"
     echo ""
-    if [ -f setup/.env.template ]; then
+    if [ -f setup/env-templates/.env.base.template ]; then
         read -p "Create .env from template? (Y/n): " create_env
         if [[ ! "$create_env" =~ ^[Nn]$ ]]; then
-            cp setup/.env.template .env
-            if ! grep -q '^TRAEFIK_NETWORK_NAME=' .env 2>/dev/null; then
+            # Source config-builder if not already loaded
+            if ! command -v build_env_file >/dev/null 2>&1; then
+                source "${SETUP_DIR}/modules/config-builder.sh"
+            fi
+            build_env_file "traefik" "$SCRIPT_DIR"
+            if ! grep -q '^TRAEFIK_NETWORK=' .env 2>/dev/null; then
                 preferred=("traefik-public" "traefik_public" "traefik")
                 networks=$(docker network ls --filter driver=overlay --format "{{.Name}}" 2>/dev/null || true)
                 for n in "${preferred[@]}"; do
                     if echo "$networks" | grep -qx "$n"; then
-                        update_env_values ".env" "TRAEFIK_NETWORK_NAME" "$n"
+                        update_env_values ".env" "TRAEFIK_NETWORK" "$n"
                         echo "✅ Auto-detected common Traefik network: $n (saved to .env)"
                         break
                     fi
@@ -105,17 +110,8 @@ if [ ! -f .env ]; then
             echo "✅ .env created from template"
             echo ""
 
-            echo "⚠️  Please edit .env with your configuration before deploying"
+            echo "⚠️  Please run the setup wizard to configure deployment settings"
             echo ""
-
-            EDITOR_CMD="${EDITOR:-nano}"
-            if ! command -v "$EDITOR_CMD" >/dev/null 2>&1; then
-                EDITOR_CMD="vi"
-            fi
-            read -p "Open .env now in $EDITOR_CMD? (Y/n): " open_env
-            if [[ ! "$open_env" =~ ^[Nn]$ ]]; then
-                "$EDITOR_CMD" .env
-            fi
         fi
     fi
 fi
