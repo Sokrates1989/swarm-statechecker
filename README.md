@@ -18,7 +18,7 @@ Docker Swarm deployment for the **statechecker** stack (API + checker + MySQL + 
 
 # 📖 Overview
 
-This repository provides a `config-stack.yml` for deploying statechecker to Docker Swarm.
+This repository provides a `swarm-stack.yml` for deploying statechecker to Docker Swarm.
 
 Services:
 
@@ -39,7 +39,7 @@ The stack uses `${IMAGE_NAME}:${IMAGE_VERSION}` (from `.env`) for both `api` and
 ./quick-start.sh
 
 # Deploy stack
-docker stack deploy -c <(docker compose -f config-stack.yml --env-file .env config) statechecker-server
+docker stack deploy -c <(docker compose -f swarm-stack.yml --env-file .env config) statechecker-server
 ```
 
 <br>
@@ -88,7 +88,7 @@ Use the quick-start menu:
 
 - `Deploy stack`
 
-This renders `config-stack.yml` with env substitution and runs `docker stack deploy`.
+This renders `swarm-stack.yml` with env substitution and runs `docker stack deploy`.
 
 <br>
 <br>

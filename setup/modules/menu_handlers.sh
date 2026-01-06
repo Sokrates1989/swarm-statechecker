@@ -450,7 +450,7 @@ _get_compose_command() {
 
 _render_stack_config() {
     # _render_stack_config
-    # Renders config-stack.yml using docker compose config.
+    # Renders swarm-stack.yml using docker compose config.
     local compose_cmd=($1)
     local env_file="$2"
     local output_file="$3"
@@ -460,12 +460,12 @@ _render_stack_config() {
         compose_env_opt=(--env-file "$env_file")
     fi
 
-    "${compose_cmd[@]}" -f config-stack.yml "${compose_env_opt[@]}" config > "$output_file"
+    "${compose_cmd[@]}" -f swarm-stack.yml "${compose_env_opt[@]}" config > "$output_file"
 }
 
 deploy_stack() {
     # deploy_stack
-    # Deploys the Docker Swarm stack using config-stack.yml.
+    # Deploys the Docker Swarm stack using swarm-stack.yml.
     local stack_name="${STACK_NAME:-statechecker}"
     echo "🚀 Deploying stack: $stack_name"
     echo ""
@@ -492,13 +492,13 @@ deploy_stack() {
     cmd_str=$(_get_compose_command)
     if [ -z "$cmd_str" ]; then
         echo "⚠️  Neither docker-compose nor 'docker compose' is available. Deploying raw stack file."
-        docker stack deploy -c config-stack.yml "$stack_name"
+        docker stack deploy -c swarm-stack.yml "$stack_name"
         return $?
     fi
 
     local temp_config=".stack-deploy-temp.yml"
     if ! _render_stack_config "$cmd_str" ".env" "$temp_config"; then
-        echo "❌ Failed to render config-stack.yml via docker compose"
+        echo "❌ Failed to render swarm-stack.yml via docker compose"
         rm -f "$temp_config" 2>/dev/null || true
         return 1
     fi

@@ -161,7 +161,7 @@ function Invoke-GitHubCICDHelper {
         DeployPath = (Get-Location).Path
         StackName = Get-EnvValueFromFile -FilePath $envFile -Key "STACK_NAME" -or (Split-Path -Leaf (Get-Location).Path)
         ImageName = Get-EnvValueFromFile -FilePath $envFile -Key "IMAGE_NAME"
-        StackFile = if (Test-Path "swarm-stack.yml") { "swarm-stack.yml" } elseif (Test-Path "config-stack.yml") { "config-stack.yml" } else { "docker-compose.yml" }
+        StackFile = if (Test-Path "swarm-stack.yml") { "swarm-stack.yml" } else { "docker-compose.yml" }
         SshHost = $publicIp
         SshPort = "22"
     }

@@ -377,7 +377,7 @@ function Get-ComposeCommand {
 function Invoke-RenderStackConfig {
     <#
     .SYNOPSIS
-        Renders config-stack.yml using docker compose config.
+        Renders swarm-stack.yml using docker compose config.
     #>
     param(
         [string]$ComposeCmd,
@@ -403,7 +403,7 @@ function Invoke-RenderStackConfig {
 function Invoke-StackDeploy {
     <#
     .SYNOPSIS
-    Deploys the stack using config-stack.yml with env-variable substitution.
+    Deploys the stack using swarm-stack.yml with env-variable substitution.
     #>
     $config = Get-EnvConfig
     $stackName = if ($config["STACK_NAME"]) { $config["STACK_NAME"] } else { "statechecker" }
@@ -446,7 +446,7 @@ function Invoke-StackDeploy {
         try { "{}" | docker secret create STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON - 2>$null | Out-Null } catch {}
     }
 
-    $stackFile = "config-stack.yml"
+    $stackFile = "swarm-stack.yml"
     $envFile = ".env"
     $tempConfig = ".stack-deploy-temp.yml"
 
