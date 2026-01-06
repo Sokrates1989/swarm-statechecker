@@ -191,6 +191,27 @@ build_stack_file() {
 }
 
 # ------------------------------------------------------------------------------
+# Update Traefik network name placeholder in swarm-stack.yml
+#
+# Arguments:
+#   $1 = stack_file      → Path to swarm-stack.yml
+#   $2 = traefik_network → Name of the Traefik external network
+#
+# Returns:
+#   None
+# ------------------------------------------------------------------------------
+update_stack_network() {
+    local stack_file="$1"
+    local traefik_network="$2"
+    
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s|XXX_CHANGE_ME_TRAEFIK_NETWORK_NAME_XXX|$traefik_network|g" "$stack_file"
+    else
+        sed -i "s|XXX_CHANGE_ME_TRAEFIK_NETWORK_NAME_XXX|$traefik_network|g" "$stack_file"
+    fi
+}
+
+# ------------------------------------------------------------------------------
 # Helper: Inject snippet file contents after a placeholder line
 #
 # Arguments:

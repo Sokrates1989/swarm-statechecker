@@ -606,6 +606,14 @@ main() {
     echo "[BUILD] Generating swarm-stack.yml from templates..." >&2
     backup_existing_files "$PROJECT_ROOT"
     build_stack_file "${proxy_type:-traefik}" "$PROJECT_ROOT" "${ssl_mode:-direct}" "$include_pma" "true"
+    
+    # Replace Traefik network placeholder with actual network name
+    if [ "${proxy_type:-traefik}" = "traefik" ]; then
+        local traefik_net
+        traefik_net=$(grep '^TRAEFIK_NETWORK=' "$PROJECT_ROOT/.env" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+        traefik_net="${traefik_net:-traefik}"
+        update_stack_network "$PROJECT_ROOT/swarm-stack.yml" "$traefik_net"
+    fi
 
     echo "" >&2
     echo "==========================" >&2
