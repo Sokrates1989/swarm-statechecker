@@ -484,6 +484,15 @@ create_secrets_from_env_file() {
     done < "$secrets_file"
 
     check_required_secrets
+
+    if [[ -r /dev/tty ]]; then
+        echo ""
+        read -r -p "Delete $secrets_file now? (recommended) (y/N): " delete_secrets_file < /dev/tty
+        if [[ "$delete_secrets_file" =~ ^[Yy]$ ]]; then
+            rm -f "$secrets_file" 2>/dev/null || true
+            echo "✅ Deleted $secrets_file"
+        fi
+    fi
 }
 
 list_secrets() {

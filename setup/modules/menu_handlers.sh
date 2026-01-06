@@ -66,8 +66,8 @@ check_stack_health() {
     local stack_name="${STACK_NAME:-statechecker}"
     local proxy_type="${PROXY_TYPE:-traefik}"
 
-    local wait_seconds="${HEALTH_WAIT_SECONDS:-10}"
-    local logs_since="${LOGS_SINCE:-10m}"
+    local wait_seconds="${HEALTH_WAIT_SECONDS:-0}"
+    local logs_since="${LOGS_SINCE:-30m}"
     local logs_tail="${LOGS_TAIL:-200}"
 
     if command -v check_deployment_health >/dev/null 2>&1; then

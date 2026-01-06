@@ -173,6 +173,21 @@ _prompt_proxy_config() {
         local pma_url
         pma_url=$(_prompt_domain_with_validation "PHPMYADMIN_URL (Traefik Host)" "${current_pma_url:-pma.statechecker.domain.de}" "pma.statechecker.example.com")
         update_env_values "$env_file" "PHPMYADMIN_URL" "$pma_url"
+
+        local current_pma_replicas
+        current_pma_replicas=$(grep '^PHPMYADMIN_REPLICAS=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+        local pma_default="N"
+        if [ "${current_pma_replicas:-0}" != "0" ]; then
+            pma_default="Y"
+        fi
+        local enable_pma
+        read_prompt "Enable phpMyAdmin? (y/N) [$pma_default]: " enable_pma
+        enable_pma="${enable_pma:-$pma_default}"
+        if [[ "$enable_pma" =~ ^[Yy]$ ]]; then
+            update_env_values "$env_file" "PHPMYADMIN_REPLICAS" "1"
+        else
+            update_env_values "$env_file" "PHPMYADMIN_REPLICAS" "0"
+        fi
     fi
 }
 
@@ -561,6 +576,19 @@ main() {
     fi
 
     mark_setup_complete
+
+    echo ""
+    read_prompt "Deploy the stack now? (Y/n): " deploy_now
+    if [[ ! "$deploy_now" =~ ^[Nn]$ ]]; then
+        echo ""
+        deploy_stack || true
+
+        if command -v check_deployment_health >/dev/null 2>&1; then
+            echo ""
+            echo "[INFO] Waiting 20s before the first health check (services may still be initializing)..."
+            check_deployment_health "${STACK_NAME:-statechecker}" "${PROXY_TYPE:-traefik}" 20 "30m" "200" || true
+        fi
+    fi
 
     echo ""
     echo "✅ Setup complete. You can now run ./quick-start.sh to manage the stack."
