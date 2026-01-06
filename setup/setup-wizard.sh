@@ -130,11 +130,11 @@ _prompt_proxy_config() {
         update_env_values "$env_file" "API_URL" "$api_url"
 
         local web_url
-        web_url=$(_prompt_domain_with_validation "WEB_URL (Traefik Host)" "${current_web_url:-web.statechecker.domain.de}" "web.statechecker.example.com")
+        web_url=$(_prompt_domain_with_validation "WEB_URL (Traefik Host)" "${current_web_url:-statechecker.domain.de}" "statechecker.example.com")
         update_env_values "$env_file" "WEB_URL" "$web_url"
 
         local pma_url
-        pma_url=$(_prompt_domain_with_validation "PHPMYADMIN_URL (Traefik Host)" "${current_pma_url:-phpmyadmin.statechecker.domain.de}" "phpmyadmin.statechecker.example.com")
+        pma_url=$(_prompt_domain_with_validation "PHPMYADMIN_URL (Traefik Host)" "${current_pma_url:-pma.statechecker.domain.de}" "pma.statechecker.example.com")
         update_env_values "$env_file" "PHPMYADMIN_URL" "$pma_url"
     fi
 }
@@ -160,6 +160,157 @@ _prompt_image_config() {
 
     read_prompt "WEB image tag [${current_web_tag:-latest}]: " web_image_tag
     update_env_values "$env_file" "WEB_IMAGE_VERSION" "${web_image_tag:-${current_web_tag:-latest}}"
+}
+
+_prompt_timezone_config() {
+    # _prompt_timezone_config
+    # Prompts for TIMEZONE and persists it into .env.
+    local env_file="$1"
+    local current_timezone
+    current_timezone=$(grep '^TIMEZONE=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+
+    read_prompt "Timezone [${current_timezone:-Europe/Berlin}]: " timezone
+    update_env_values "$env_file" "TIMEZONE" "${timezone:-${current_timezone:-Europe/Berlin}}"
+}
+
+_prompt_telegram_config() {
+    # _prompt_telegram_config
+    # Prompts for Telegram-related configuration and persists it into .env.
+    local env_file="$1"
+    local current_enabled current_error_ids current_info_ids current_status_minutes
+
+    current_enabled=$(grep '^TELEGRAM_ENABLED=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    current_error_ids=$(grep '^TELEGRAM_RECIPIENTS_ERROR_CHAT_IDS=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    current_info_ids=$(grep '^TELEGRAM_RECIPIENTS_INFO_CHAT_IDS=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    current_status_minutes=$(grep '^TELEGRAM_STATUS_MESSAGES_EVERY_X_MINUTES=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+
+    read_prompt "Enable Telegram notifications? (y/N): " enable_telegram
+    if [[ "$enable_telegram" =~ ^[Yy]$ ]]; then
+        update_env_values "$env_file" "TELEGRAM_ENABLED" "true"
+
+        read_prompt "Telegram error chat IDs (comma-separated) [${current_error_ids:--123456789}]: " telegram_error
+        update_env_values "$env_file" "TELEGRAM_RECIPIENTS_ERROR_CHAT_IDS" "${telegram_error:-${current_error_ids:--123456789}}"
+
+        read_prompt "Telegram info chat IDs (comma-separated) [${current_info_ids:--123456789}]: " telegram_info
+        update_env_values "$env_file" "TELEGRAM_RECIPIENTS_INFO_CHAT_IDS" "${telegram_info:-${current_info_ids:--123456789}}"
+
+        read_prompt "Telegram status messages every X minutes [${current_status_minutes:-60}]: " telegram_status
+        update_env_values "$env_file" "TELEGRAM_STATUS_MESSAGES_EVERY_X_MINUTES" "${telegram_status:-${current_status_minutes:-60}}"
+    else
+        update_env_values "$env_file" "TELEGRAM_ENABLED" "false"
+    fi
+}
+
+_prompt_email_config() {
+    # _prompt_email_config
+    # Prompts for Email-related configuration and persists it into .env.
+    local env_file="$1"
+    local current_enabled current_user current_host current_port current_rcpt_err current_rcpt_info
+
+    current_enabled=$(grep '^EMAIL_ENABLED=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    current_user=$(grep '^EMAIL_SENDER_USER=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    current_host=$(grep '^EMAIL_SENDER_HOST=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    current_port=$(grep '^EMAIL_SENDER_PORT=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    current_rcpt_err=$(grep '^EMAIL_RECIPIENTS_ERROR=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    current_rcpt_info=$(grep '^EMAIL_RECIPIENTS_INFORMATION=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+
+    read_prompt "Enable Email notifications? (y/N): " enable_email
+    if [[ "$enable_email" =~ ^[Yy]$ ]]; then
+        update_env_values "$env_file" "EMAIL_ENABLED" "true"
+
+        read_prompt "Email sender user [${current_user:-some.mail@domain.com}]: " email_user
+        update_env_values "$env_file" "EMAIL_SENDER_USER" "${email_user:-${current_user:-some.mail@domain.com}}"
+
+        read_prompt "Email SMTP host [${current_host:-smtp.example.com}]: " email_host
+        update_env_values "$env_file" "EMAIL_SENDER_HOST" "${email_host:-${current_host:-smtp.example.com}}"
+
+        read_prompt "Email SMTP port [${current_port:-587}]: " email_port
+        update_env_values "$env_file" "EMAIL_SENDER_PORT" "${email_port:-${current_port:-587}}"
+
+        read_prompt "Email recipients (error) [${current_rcpt_err:-mail1@domain.com}]: " email_rcpt_err
+        update_env_values "$env_file" "EMAIL_RECIPIENTS_ERROR" "${email_rcpt_err:-${current_rcpt_err:-mail1@domain.com}}"
+
+        read_prompt "Email recipients (information) [${current_rcpt_info:-mail1@domain.com}]: " email_rcpt_info
+        update_env_values "$env_file" "EMAIL_RECIPIENTS_INFORMATION" "${email_rcpt_info:-${current_rcpt_info:-mail1@domain.com}}"
+    else
+        update_env_values "$env_file" "EMAIL_ENABLED" "false"
+    fi
+}
+
+_prompt_websites_to_check() {
+    # _prompt_websites_to_check
+    # Prompts for a list of websites to check.
+    #
+    # Returns:
+    # - A JSON array string (e.g. ["https://a","https://b"]) via stdout
+    local websites=()
+    local input_url=""
+
+    echo ""
+    echo "[CONFIG] Websites to Check"
+    echo "Enter one website URL per prompt. Leave empty to finish."
+    echo ""
+
+    while true; do
+        read_prompt "Website URL (empty to finish): " input_url
+        input_url="${input_url%$'\r'}"
+        if [ -z "$input_url" ]; then
+            if [ ${#websites[@]} -eq 0 ]; then
+                echo "[WARN] Please enter at least one website URL (e.g., https://example.com)" >&2
+                continue
+            fi
+            break
+        fi
+        websites+=("$input_url")
+    done
+
+    local json="["
+    local first=true
+    local url
+    for url in "${websites[@]}"; do
+        local escaped
+        escaped="$url"
+        escaped="${escaped//\\/\\\\}"
+        escaped="${escaped//\"/\\\"}"
+        if [ "$first" = true ]; then
+            first=false
+        else
+            json+="," 
+        fi
+        json+="\"${escaped}\""
+    done
+    json+="]"
+
+    echo "$json"
+}
+
+_update_statechecker_server_config() {
+    # _update_statechecker_server_config
+    # Regenerates STATECHECKER_SERVER_CONFIG based on env values and websites list.
+    local env_file="$1"
+    local websites_json_array="$2"
+
+    local tz check_web_every check_gd_every status_offset
+    local telegram_err telegram_info telegram_status
+
+    tz=$(grep '^TIMEZONE=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    check_web_every=$(grep '^CHECK_WEBSITES_EVERY_X_MINUTES=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    check_gd_every=$(grep '^CHECK_GOOGLEDRIVE_EVERY_X_MINUTES=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    status_offset=$(grep '^STATUS_MESSAGES_TIME_OFFSET_PERCENTAGE=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+
+    telegram_err=$(grep '^TELEGRAM_RECIPIENTS_ERROR_CHAT_IDS=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    telegram_info=$(grep '^TELEGRAM_RECIPIENTS_INFO_CHAT_IDS=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    telegram_status=$(grep '^TELEGRAM_STATUS_MESSAGES_EVERY_X_MINUTES=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+
+    check_web_every="${check_web_every:-30}"
+    check_gd_every="${check_gd_every:-60}"
+    status_offset="${status_offset:-2.5}"
+    telegram_status="${telegram_status:-60}"
+
+    local config_json
+    config_json="{\"toolsUsingApi_tolerancePeriod_inSeconds\":\"100\",\"telegram\":{\"botToken\":\"USE_SECRET_INSTEAD\",\"errorChatID\":\"${telegram_err}\",\"infoChatID\":\"${telegram_info}\",\"adminStatusMessage_everyXMinutes\":\"${telegram_status}\",\"adminStatusMessage_operationTime_offsetPercentage\":\"${status_offset}\"},\"websites\":{\"checkWebSitesEveryXMinutes\":${check_web_every},\"websitesToCheck\":${websites_json_array}},\"googleDrive\":{\"checkFilesEveryXMinutes\":${check_gd_every},\"foldersToCheck\":[]}}"
+
+    update_env_values "$env_file" "STATECHECKER_SERVER_CONFIG" "$config_json"
 }
 
 prompt_update_env_values() {
@@ -189,6 +340,20 @@ prompt_update_env_values() {
 
     _prompt_proxy_config "$env_file" "$proxy_type"
     _prompt_image_config "$env_file"
+
+    echo ""
+    echo "=========================="
+    echo "  Notifications & Timezone"
+    echo "=========================="
+    echo ""
+
+    _prompt_timezone_config "$env_file"
+    _prompt_telegram_config "$env_file"
+    _prompt_email_config "$env_file"
+
+    local websites_json
+    websites_json=$(_prompt_websites_to_check)
+    _update_statechecker_server_config "$env_file" "$websites_json"
 }
 
 mark_setup_complete() {
@@ -257,11 +422,11 @@ main() {
                 update_env_values "$PROJECT_ROOT/.env" "API_URL" "$api_url"
             fi
             if [ -z "${WEB_URL:-}" ]; then
-                web_url=$(_prompt_domain_with_validation "WEB_URL (Traefik Host)" "web.statechecker.domain.de" "web.statechecker.example.com")
+                web_url=$(_prompt_domain_with_validation "WEB_URL (Traefik Host)" "statechecker.domain.de" "statechecker.example.com")
                 update_env_values "$PROJECT_ROOT/.env" "WEB_URL" "$web_url"
             fi
             if [ -z "${PHPMYADMIN_URL:-}" ]; then
-                pma_url=$(_prompt_domain_with_validation "PHPMYADMIN_URL (Traefik Host)" "phpmyadmin.statechecker.domain.de" "phpmyadmin.statechecker.example.com")
+                pma_url=$(_prompt_domain_with_validation "PHPMYADMIN_URL (Traefik Host)" "pma.statechecker.domain.de" "pma.statechecker.example.com")
                 update_env_values "$PROJECT_ROOT/.env" "PHPMYADMIN_URL" "$pma_url"
             fi
         fi

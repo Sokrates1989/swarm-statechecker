@@ -168,6 +168,107 @@ check_secret_exists() {
     fi
 }
 
+_get_stack_name_for_secret_ops() {
+    # _get_stack_name_for_secret_ops
+    # Determines the stack name to use for secret recreation safety checks.
+    #
+    # Returns:
+    # - stack name string via stdout
+    local stack_name="${STACK_NAME:-}"
+
+    if [ -z "$stack_name" ] && [ -f .env ]; then
+        stack_name=$(grep '^STACK_NAME=' .env 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d ' "' | tr -d '\r')
+    fi
+
+    echo "${stack_name:-statechecker}"
+}
+
+_is_stack_running_for_secret_ops() {
+    # _is_stack_running_for_secret_ops
+    # Checks whether a swarm stack is currently deployed.
+    #
+    # Arguments:
+    # - $1: stack name
+    #
+    # Returns:
+    # - 0 if running
+    # - 1 otherwise
+    local stack_name="$1"
+    [ -z "$stack_name" ] && return 1
+
+    docker stack ls --format '{{.Name}}' 2>/dev/null | grep -qx "$stack_name"
+}
+
+_wait_for_stack_removal_for_secret_ops() {
+    # _wait_for_stack_removal_for_secret_ops
+    # Waits until a stack is removed (best-effort).
+    #
+    # Arguments:
+    # - $1: stack name
+    # - $2: timeout seconds (optional, default: 120)
+    local stack_name="$1"
+    local timeout_seconds="${2:-120}"
+    local elapsed=0
+
+    while [ $elapsed -lt "$timeout_seconds" ]; do
+        if ! _is_stack_running_for_secret_ops "$stack_name"; then
+            return 0
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+
+    return 1
+}
+
+_ensure_stack_removed_for_secret_recreate() {
+    # _ensure_stack_removed_for_secret_recreate
+    # Ensures a running stack is removed before deleting/recreating secrets.
+    #
+    # Arguments:
+    # - $1: secret name
+    # - $2: stack name
+    #
+    # Returns:
+    # - 0 if stack is not running or was removed
+    # - 1 otherwise
+    local secret_name="$1"
+    local stack_name="$2"
+
+    if ! _is_stack_running_for_secret_ops "$stack_name"; then
+        return 0
+    fi
+
+    echo ""
+    echo "[WARN] Stack '$stack_name' is currently running and may be using Docker secrets."
+    echo "       Docker secrets cannot be removed while in use by running services."
+    echo ""
+    echo "       To recreate secret '$secret_name', the stack must be removed first."
+    echo ""
+
+    local remove_stack=""
+    if [[ -r /dev/tty ]]; then
+        read -r -p "Remove stack '$stack_name' now? (y/N): " remove_stack < /dev/tty
+    else
+        read -r -p "Remove stack '$stack_name' now? (y/N): " remove_stack
+    fi
+
+    if [[ ! "$remove_stack" =~ ^[Yy]$ ]]; then
+        echo "[SKIP] Keeping stack running. Cannot recreate secret."
+        return 1
+    fi
+
+    echo "Removing stack '$stack_name'..."
+    docker stack rm "$stack_name" 2>/dev/null || true
+    if _wait_for_stack_removal_for_secret_ops "$stack_name" 120; then
+        sleep 2
+        return 0
+    fi
+
+    echo "[WARN] Stack removal taking longer than expected. Please wait and retry."
+    return 1
+}
+
 create_secret_interactive() {
     # create_secret_interactive
     # Interactively prompts for a secret value and creates a Docker secret.
@@ -191,16 +292,39 @@ create_secret_interactive() {
         echo "❌ Secret value cannot be empty"
         return 1
     fi
+
+    if check_secret_exists "$secret_name"; then
+        local recreate=""
+        if [[ -r /dev/tty ]]; then
+            read -r -p "Secret '$secret_name' already exists. Delete and recreate? (y/N): " recreate < /dev/tty
+        else
+            read -r -p "Secret '$secret_name' already exists. Delete and recreate? (y/N): " recreate
+        fi
+
+        if [[ ! "$recreate" =~ ^[Yy]$ ]]; then
+            echo "⏭️  Keeping existing secret: $secret_name"
+            return 0
+        fi
+
+        local stack_name
+        stack_name=$(_get_stack_name_for_secret_ops)
+        if ! _ensure_stack_removed_for_secret_recreate "$secret_name" "$stack_name"; then
+            return 1
+        fi
+
+        if ! docker secret rm "$secret_name" >/dev/null 2>&1; then
+            echo "❌ Failed to remove secret: $secret_name (may still be in use)"
+            return 1
+        fi
+    fi
     
-    echo "$secret_value" | docker secret create "$secret_name" -
-    
-    if [ $? -eq 0 ]; then
+    if printf '%s' "$secret_value" | docker secret create "$secret_name" - >/dev/null 2>&1; then
         echo "✅ Secret created: $secret_name"
         return 0
-    else
-        echo "❌ Failed to create secret: $secret_name"
-        return 1
     fi
+
+    echo "❌ Failed to create secret: $secret_name"
+    return 1
 }
 
 create_secret_from_file() {
@@ -218,6 +342,31 @@ create_secret_from_file() {
     if [ ! -f "$file_path" ]; then
         echo "❌ File not found: $file_path"
         return 1
+    fi
+
+    if check_secret_exists "$secret_name"; then
+        local recreate=""
+        if [[ -r /dev/tty ]]; then
+            read -r -p "Secret '$secret_name' already exists. Delete and recreate? (y/N): " recreate < /dev/tty
+        else
+            read -r -p "Secret '$secret_name' already exists. Delete and recreate? (y/N): " recreate
+        fi
+
+        if [[ ! "$recreate" =~ ^[Yy]$ ]]; then
+            echo "⏭️  Keeping existing secret: $secret_name"
+            return 0
+        fi
+
+        local stack_name
+        stack_name=$(_get_stack_name_for_secret_ops)
+        if ! _ensure_stack_removed_for_secret_recreate "$secret_name" "$stack_name"; then
+            return 1
+        fi
+
+        if ! docker secret rm "$secret_name" >/dev/null 2>&1; then
+            echo "❌ Failed to remove secret: $secret_name (may still be in use)"
+            return 1
+        fi
     fi
     
     docker secret create "$secret_name" "$file_path"
@@ -245,9 +394,22 @@ create_secret_from_value() {
     fi
 
     if check_secret_exists "$secret_name"; then
-        read -p "Secret '$secret_name' already exists. Delete and recreate? (y/N): " recreate
+        local recreate=""
+        if [[ -r /dev/tty ]]; then
+            read -r -p "Secret '$secret_name' already exists. Delete and recreate? (y/N): " recreate < /dev/tty
+        else
+            read -r -p "Secret '$secret_name' already exists. Delete and recreate? (y/N): " recreate
+        fi
         if [[ "$recreate" =~ ^[Yy]$ ]]; then
-            docker secret rm "$secret_name" >/dev/null 2>&1 || true
+            local stack_name
+            stack_name=$(_get_stack_name_for_secret_ops)
+            if ! _ensure_stack_removed_for_secret_recreate "$secret_name" "$stack_name"; then
+                return 1
+            fi
+            if ! docker secret rm "$secret_name" >/dev/null 2>&1; then
+                echo "❌ Failed to remove secret: $secret_name (may still be in use)"
+                return 1
+            fi
         else
             echo "⏭️  Keeping existing secret: $secret_name"
             return 0
@@ -261,6 +423,9 @@ create_secret_from_value() {
 create_secrets_from_env_file() {
     local secrets_file="${1:-secrets.env}"
     local template_file="${2:-setup/secrets.env.template}"
+
+    local stack_name
+    stack_name=$(_get_stack_name_for_secret_ops)
 
     if [ ! -f "$secrets_file" ]; then
         if [ -f "$template_file" ]; then
@@ -302,14 +467,6 @@ create_secrets_from_env_file() {
         fi
 
         if [ "$key" = "STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON" ] && [ -n "$value" ] && [ -f "$value" ]; then
-            if check_secret_exists "$key"; then
-                read -p "Secret '$key' already exists. Delete and recreate? (y/N): " recreate
-                if [[ "$recreate" =~ ^[Yy]$ ]]; then
-                    docker secret rm "$key" >/dev/null 2>&1 || true
-                else
-                    continue
-                fi
-            fi
             create_secret_from_file "$key" "$value" || return 1
             continue
         fi

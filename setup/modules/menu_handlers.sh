@@ -145,6 +145,7 @@ _get_no_proxy_awk_script() {
         BEGIN {
             section=""
             current_service=""
+            api_has_ports=0
             web_has_ports=0
             pma_has_ports=0
             skip_traefik_net=0
@@ -155,6 +156,11 @@ _get_no_proxy_awk_script() {
         }
 
         function maybe_inject_ports_before_leave() {
+            if (section=="services" && current_service=="api" && api_has_ports==0) {
+                print "    ports:"
+                print "      - \"" api_port ":" api_port "\""
+                api_has_ports=1
+            }
             if (section=="services" && current_service=="web" && web_has_ports==0) {
                 print "    ports:"
                 print "      - \"" web_port ":80\""
@@ -219,12 +225,16 @@ _get_no_proxy_awk_script() {
             if (section=="services" && line ~ /^  [A-Za-z0-9_.-]+:[[:space:]]*$/) {
                 maybe_inject_ports_before_leave()
                 current_service=line; sub(/^  /, "", current_service); sub(/:[[:space:]]*$/, "", current_service)
-                web_has_ports=0; pma_has_ports=0; print line; next
+                api_has_ports=0; web_has_ports=0; pma_has_ports=0; print line; next
             }
 
+            if (section=="services" && current_service=="api" && line ~ /^    ports:[[:space:]]*$/) { api_has_ports=1 }
             if (section=="services" && current_service=="web" && line ~ /^    ports:[[:space:]]*$/) { web_has_ports=1 }
             if (section=="services" && current_service=="phpmyadmin" && line ~ /^    ports:[[:space:]]*$/) { pma_has_ports=1 }
 
+            if (section=="services" && current_service=="api" && api_has_ports==0 && line ~ /^    deploy:[[:space:]]*$/) {
+                print "    ports:"; print "      - \"" api_port ":" api_port "\""; api_has_ports=1
+            }
             if (section=="services" && current_service=="web" && web_has_ports==0 && line ~ /^    deploy:[[:space:]]*$/) {
                 print "    ports:"; print "      - \"" web_port ":80\""; web_has_ports=1
             }
@@ -250,11 +260,12 @@ _apply_no_proxy_transformations() {
     local stack_file="$1"
     [ -z "$stack_file" ] || [ ! -f "$stack_file" ] && { echo "❌ Stack file missing"; return 1; }
 
+    local api_port="${API_PORT:-8787}"
     local web_port="${WEB_PORT:-8080}"
     local pma_port="${PHPMYADMIN_PORT:-8081}"
     local tmp_file="${stack_file}.tmp"
 
-    awk -v web_port="$web_port" -v pma_port="$pma_port" "$(_get_no_proxy_awk_script)" "$stack_file" > "$tmp_file"
+    awk -v api_port="$api_port" -v web_port="$web_port" -v pma_port="$pma_port" "$(_get_no_proxy_awk_script)" "$stack_file" > "$tmp_file"
     mv "$tmp_file" "$stack_file"
     return 0
 }
@@ -383,6 +394,21 @@ deploy_stack() {
     
     [ -f .env ] || { echo "❌ .env file not found. Please create it first."; return 1; }
     load_env
+
+    if [ "${TELEGRAM_ENABLED:-false}" != "true" ] && ! check_secret_exists "STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN"; then
+        echo "[INFO] TELEGRAM_ENABLED=false and secret missing; creating placeholder secret STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN"
+        printf '%s' 'DISABLED' | docker secret create "STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN" - >/dev/null 2>&1 || true
+    fi
+
+    if [ "${EMAIL_ENABLED:-false}" != "true" ] && ! check_secret_exists "STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD"; then
+        echo "[INFO] EMAIL_ENABLED=false and secret missing; creating placeholder secret STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD"
+        printf '%s' 'DISABLED' | docker secret create "STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD" - >/dev/null 2>&1 || true
+    fi
+
+    if ! check_secret_exists "STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"; then
+        echo "[INFO] Google Drive secret missing; creating placeholder secret STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"
+        printf '%s' '{}' | docker secret create "STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON" - >/dev/null 2>&1 || true
+    fi
 
     local cmd_str
     cmd_str=$(_get_compose_command)
@@ -584,26 +610,26 @@ create_required_secrets_menu() {
     echo ""
     echo "🔐 Create required secrets"
     echo ""
-    
-    if ! check_secret_exists "STATECHECKER_SERVER_AUTHENTICATION_TOKEN"; then
-        read_prompt "Create STATECHECKER_SERVER_AUTHENTICATION_TOKEN? (Y/n): " create_auth
-        if [[ ! "$create_auth" =~ ^[Nn]$ ]]; then
-            create_secret_interactive "STATECHECKER_SERVER_AUTHENTICATION_TOKEN" "API authentication token"
-        fi
+
+    local prompt_auth="Create"
+    check_secret_exists "STATECHECKER_SERVER_AUTHENTICATION_TOKEN" && prompt_auth="Recreate"
+    read_prompt "$prompt_auth STATECHECKER_SERVER_AUTHENTICATION_TOKEN? (y/N): " create_auth
+    if [[ "$create_auth" =~ ^[Yy]$ ]]; then
+        create_secret_interactive "STATECHECKER_SERVER_AUTHENTICATION_TOKEN" "API authentication token" || true
     fi
-    
-    if ! check_secret_exists "STATECHECKER_SERVER_DB_ROOT_USER_PW"; then
-        read_prompt "Create STATECHECKER_SERVER_DB_ROOT_USER_PW? (Y/n): " create_root
-        if [[ ! "$create_root" =~ ^[Nn]$ ]]; then
-            create_secret_interactive "STATECHECKER_SERVER_DB_ROOT_USER_PW" "MySQL root password"
-        fi
+
+    local prompt_root="Create"
+    check_secret_exists "STATECHECKER_SERVER_DB_ROOT_USER_PW" && prompt_root="Recreate"
+    read_prompt "$prompt_root STATECHECKER_SERVER_DB_ROOT_USER_PW? (y/N): " create_root
+    if [[ "$create_root" =~ ^[Yy]$ ]]; then
+        create_secret_interactive "STATECHECKER_SERVER_DB_ROOT_USER_PW" "MySQL root password" || true
     fi
-    
-    if ! check_secret_exists "STATECHECKER_SERVER_DB_USER_PW"; then
-        read_prompt "Create STATECHECKER_SERVER_DB_USER_PW? (Y/n): " create_user
-        if [[ ! "$create_user" =~ ^[Nn]$ ]]; then
-            create_secret_interactive "STATECHECKER_SERVER_DB_USER_PW" "MySQL user password"
-        fi
+
+    local prompt_user="Create"
+    check_secret_exists "STATECHECKER_SERVER_DB_USER_PW" && prompt_user="Recreate"
+    read_prompt "$prompt_user STATECHECKER_SERVER_DB_USER_PW? (y/N): " create_user
+    if [[ "$create_user" =~ ^[Yy]$ ]]; then
+        create_secret_interactive "STATECHECKER_SERVER_DB_USER_PW" "MySQL user password" || true
     fi
 }
 
@@ -613,15 +639,25 @@ create_optional_secrets_menu() {
     echo ""
     echo "🔐 Create optional secrets"
     echo ""
-    
-    read_prompt "Create Telegram bot token secret? (y/N): " create_telegram
-    if [[ "$create_telegram" =~ ^[Yy]$ ]]; then
-        create_secret_interactive "STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN" "Telegram bot token"
+
+    load_env || true
+
+    if [ "${TELEGRAM_ENABLED:-false}" = "true" ]; then
+        read_prompt "Create Telegram bot token secret? (y/N): " create_telegram
+        if [[ "$create_telegram" =~ ^[Yy]$ ]]; then
+            create_secret_interactive "STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN" "Telegram bot token" || true
+        fi
+    else
+        echo "[INFO] TELEGRAM_ENABLED=false: skipping Telegram secret prompt"
     fi
-    
-    read_prompt "Create Email password secret? (y/N): " create_email
-    if [[ "$create_email" =~ ^[Yy]$ ]]; then
-        create_secret_interactive "STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD" "Email SMTP password"
+
+    if [ "${EMAIL_ENABLED:-false}" = "true" ]; then
+        read_prompt "Create Email password secret? (y/N): " create_email
+        if [[ "$create_email" =~ ^[Yy]$ ]]; then
+            create_secret_interactive "STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD" "Email SMTP password" || true
+        fi
+    else
+        echo "[INFO] EMAIL_ENABLED=false: skipping Email secret prompt"
     fi
     
     read_prompt "Create Google Drive service account secret? (y/N): " create_gdrive
@@ -629,7 +665,7 @@ create_optional_secrets_menu() {
         echo "For Google Drive, you need to provide the JSON file path"
         read_prompt "Path to service account JSON file: " json_path
         if [ -f "$json_path" ]; then
-            create_secret_from_file "STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON" "$json_path"
+            create_secret_from_file "STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON" "$json_path" || true
         else
             echo "❌ File not found: $json_path"
         fi

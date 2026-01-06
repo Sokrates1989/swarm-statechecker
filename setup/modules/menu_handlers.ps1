@@ -207,13 +207,20 @@ function Add-PortsIfMissing {
         [System.Collections.Generic.List[string]]$Output,
         [string]$Section,
         [string]$CurrentService,
+        [ref][bool]$ApiHasPorts,
         [ref][bool]$WebHasPorts,
         [ref][bool]$PmaHasPorts,
+        [string]$ApiPort,
         [string]$WebPort,
         [string]$PmaPort
     )
     if ($Section -ne "services") { return }
 
+    if ($CurrentService -eq "api" -and -not $ApiHasPorts.Value) {
+        $Output.Add("    ports:")
+        $Output.Add('      - "' + $ApiPort + ':' + $ApiPort + '"')
+        $ApiHasPorts.Value = $true
+    }
     if ($CurrentService -eq "web" -and -not $WebHasPorts.Value) {
         $Output.Add("    ports:")
         $Output.Add('      - "' + $WebPort + ':80"')
@@ -238,6 +245,7 @@ function Convert-RenderedStackToNoProxy {
         return $false
     }
 
+    $apiPort = if ($env:API_PORT) { $env:API_PORT } else { "8787" }
     $webPort = if ($env:WEB_PORT) { $env:WEB_PORT } else { "8080" }
     $pmaPort = if ($env:PHPMYADMIN_PORT) { $env:PHPMYADMIN_PORT } else { "8081" }
 
@@ -245,7 +253,7 @@ function Convert-RenderedStackToNoProxy {
     $out = New-Object System.Collections.Generic.List[string]
 
     $state = @{
-        Section = ""; CurrentService = ""; WebHasPorts = $false; PmaHasPorts = $false;
+        Section = ""; CurrentService = ""; ApiHasPorts = $false; WebHasPorts = $false; PmaHasPorts = $false;
         InNetworksSection = $false; SkipTraefikNetworkBlock = $false; SkipTraefikNetworkIndent = 0;
         InLabelsBlock = $false; LabelsIndent = 0;
         LabelsBuffer = New-Object System.Collections.Generic.List[string]
@@ -270,11 +278,11 @@ function Convert-RenderedStackToNoProxy {
 
         if ($line -match '^services:\s*$') { $state.Section = "services"; $state.CurrentService = ""; $out.Add($line); continue }
         if ($line -match '^networks:\s*$') {
-            Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -WebPort $webPort -PmaPort $pmaPort
+            Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -ApiHasPorts ([ref]$state.ApiHasPorts) -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -ApiPort $apiPort -WebPort $webPort -PmaPort $pmaPort
             $state.Section = "networks"; $state.CurrentService = ""; $state.InNetworksSection = $true; $out.Add($line); continue
         }
         if ($line -match '^secrets:\s*$') {
-            Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -WebPort $webPort -PmaPort $pmaPort
+            Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -ApiHasPorts ([ref]$state.ApiHasPorts) -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -ApiPort $apiPort -WebPort $webPort -PmaPort $pmaPort
             $state.Section = "secrets"; $state.CurrentService = ""; $state.InNetworksSection = $false; $out.Add($line); continue
         }
 
@@ -282,15 +290,16 @@ function Convert-RenderedStackToNoProxy {
         if ($line -match '^\s*-\s*traefik\s*$') { continue }
 
         if ($state.Section -eq "services" -and $line -match '^\s{2}([A-Za-z0-9_.-]+):\s*$') {
-            Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -WebPort $webPort -PmaPort $pmaPort
-            $state.CurrentService = $matches[1]; $state.WebHasPorts = $false; $state.PmaHasPorts = $false; $out.Add($line); continue
+            Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -ApiHasPorts ([ref]$state.ApiHasPorts) -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -ApiPort $apiPort -WebPort $webPort -PmaPort $pmaPort
+            $state.CurrentService = $matches[1]; $state.ApiHasPorts = $false; $state.WebHasPorts = $false; $state.PmaHasPorts = $false; $out.Add($line); continue
         }
 
+        if ($state.Section -eq "services" -and $state.CurrentService -eq "api" -and $line -match '^\s{4}ports:\s*$') { $state.ApiHasPorts = $true }
         if ($state.Section -eq "services" -and $state.CurrentService -eq "web" -and $line -match '^\s{4}ports:\s*$') { $state.WebHasPorts = $true }
         if ($state.Section -eq "services" -and $state.CurrentService -eq "phpmyadmin" -and $line -match '^\s{4}ports:\s*$') { $state.PmaHasPorts = $true }
 
-        if ($state.Section -eq "services" -and ($state.CurrentService -eq "web" -or $state.CurrentService -eq "phpmyadmin") -and -not ($state.CurrentService -eq "web" -and $state.WebHasPorts) -and -not ($state.CurrentService -eq "phpmyadmin" -and $state.PmaHasPorts) -and $line -match '^\s{4}deploy:\s*$') {
-            Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -WebPort $webPort -PmaPort $pmaPort
+        if ($state.Section -eq "services" -and ($state.CurrentService -eq "api" -or $state.CurrentService -eq "web" -or $state.CurrentService -eq "phpmyadmin") -and $line -match '^\s{4}deploy:\s*$') {
+            Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -ApiHasPorts ([ref]$state.ApiHasPorts) -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -ApiPort $apiPort -WebPort $webPort -PmaPort $pmaPort
         }
 
         if ($state.Section -eq "services" -and $line -match '^\s{6}labels:\s*$') { $state.InLabelsBlock = $true; $state.LabelsIndent = $indent; $state.LabelsBuffer.Clear(); continue }
@@ -299,7 +308,7 @@ function Convert-RenderedStackToNoProxy {
     }
 
     if ($state.InLabelsBlock) { $refInLabels = [ref]$state.InLabelsBlock; Flush-LabelsBuffer -Output $out -LabelsBuffer $state.LabelsBuffer -LabelsIndent $state.LabelsIndent -InLabelsBlock $refInLabels }
-    Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -WebPort $webPort -PmaPort $pmaPort
+    Add-PortsIfMissing -Output $out -Section $state.Section -CurrentService $state.CurrentService -ApiHasPorts ([ref]$state.ApiHasPorts) -WebHasPorts ([ref]$state.WebHasPorts) -PmaHasPorts ([ref]$state.PmaHasPorts) -ApiPort $apiPort -WebPort $webPort -PmaPort $pmaPort
 
     try { $out | Set-Content -Path $StackFile -Encoding utf8; return $true }
     catch { Write-Host "[ERROR] Failed to write transformed stack file: $($_.Exception.Message)" -ForegroundColor Red; return $false }
@@ -418,6 +427,24 @@ function Invoke-StackDeploy {
     }
     
     Set-ProcessEnvFromConfig -Config $config
+
+    $telegramEnabled = if ($config.ContainsKey("TELEGRAM_ENABLED")) { $config["TELEGRAM_ENABLED"] } else { "false" }
+    $emailEnabled = if ($config.ContainsKey("EMAIL_ENABLED")) { $config["EMAIL_ENABLED"] } else { "false" }
+
+    if ($telegramEnabled -ne "true" -and -not (Test-SecretExists -SecretName "STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN")) {
+        Write-Host "[INFO] TELEGRAM_ENABLED=false and secret missing; creating placeholder secret STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN" -ForegroundColor Gray
+        try { "DISABLED" | docker secret create STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN - 2>$null | Out-Null } catch {}
+    }
+
+    if ($emailEnabled -ne "true" -and -not (Test-SecretExists -SecretName "STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD")) {
+        Write-Host "[INFO] EMAIL_ENABLED=false and secret missing; creating placeholder secret STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD" -ForegroundColor Gray
+        try { "DISABLED" | docker secret create STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD - 2>$null | Out-Null } catch {}
+    }
+
+    if (-not (Test-SecretExists -SecretName "STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON")) {
+        Write-Host "[INFO] Google Drive secret missing; creating placeholder secret STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON" -ForegroundColor Gray
+        try { "{}" | docker secret create STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON - 2>$null | Out-Null } catch {}
+    }
 
     $stackFile = "config-stack.yml"
     $envFile = ".env"
@@ -598,25 +625,22 @@ function New-RequiredSecretsMenu {
     Write-Host "Create required secrets" -ForegroundColor Cyan
     Write-Host ""
     
-    if (-not (Test-SecretExists -SecretName "STATECHECKER_SERVER_AUTHENTICATION_TOKEN")) {
-        $createAuth = Read-Host "Create STATECHECKER_SERVER_AUTHENTICATION_TOKEN? (Y/n)"
-        if ($createAuth -ne "n" -and $createAuth -ne "N") {
-            New-DockerSecret -SecretName "STATECHECKER_SERVER_AUTHENTICATION_TOKEN" -Description "API authentication token"
-        }
+    $labelAuth = if (Test-SecretExists -SecretName "STATECHECKER_SERVER_AUTHENTICATION_TOKEN") { "Recreate" } else { "Create" }
+    $createAuth = Read-Host "$labelAuth STATECHECKER_SERVER_AUTHENTICATION_TOKEN? (y/N)"
+    if ($createAuth -match '^[Yy]$') {
+        $null = New-DockerSecret -SecretName "STATECHECKER_SERVER_AUTHENTICATION_TOKEN" -Description "API authentication token"
     }
-    
-    if (-not (Test-SecretExists -SecretName "STATECHECKER_SERVER_DB_ROOT_USER_PW")) {
-        $createRoot = Read-Host "Create STATECHECKER_SERVER_DB_ROOT_USER_PW? (Y/n)"
-        if ($createRoot -ne "n" -and $createRoot -ne "N") {
-            New-DockerSecret -SecretName "STATECHECKER_SERVER_DB_ROOT_USER_PW" -Description "MySQL root password"
-        }
+
+    $labelRoot = if (Test-SecretExists -SecretName "STATECHECKER_SERVER_DB_ROOT_USER_PW") { "Recreate" } else { "Create" }
+    $createRoot = Read-Host "$labelRoot STATECHECKER_SERVER_DB_ROOT_USER_PW? (y/N)"
+    if ($createRoot -match '^[Yy]$') {
+        $null = New-DockerSecret -SecretName "STATECHECKER_SERVER_DB_ROOT_USER_PW" -Description "MySQL root password"
     }
-    
-    if (-not (Test-SecretExists -SecretName "STATECHECKER_SERVER_DB_USER_PW")) {
-        $createUser = Read-Host "Create STATECHECKER_SERVER_DB_USER_PW? (Y/n)"
-        if ($createUser -ne "n" -and $createUser -ne "N") {
-            New-DockerSecret -SecretName "STATECHECKER_SERVER_DB_USER_PW" -Description "MySQL user password"
-        }
+
+    $labelUser = if (Test-SecretExists -SecretName "STATECHECKER_SERVER_DB_USER_PW") { "Recreate" } else { "Create" }
+    $createUser = Read-Host "$labelUser STATECHECKER_SERVER_DB_USER_PW? (y/N)"
+    if ($createUser -match '^[Yy]$') {
+        $null = New-DockerSecret -SecretName "STATECHECKER_SERVER_DB_USER_PW" -Description "MySQL user password"
     }
 }
 
@@ -629,14 +653,26 @@ function New-OptionalSecretsMenu {
     Write-Host "Create optional secrets" -ForegroundColor Cyan
     Write-Host ""
     
-    $createTelegram = Read-Host "Create Telegram bot token secret? (y/N)"
-    if ($createTelegram -match "^[Yy]$") {
-        New-DockerSecret -SecretName "STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN" -Description "Telegram bot token"
+    $config = Get-EnvConfig
+    $telegramEnabled = if ($config.ContainsKey("TELEGRAM_ENABLED")) { $config["TELEGRAM_ENABLED"] } else { "false" }
+    $emailEnabled = if ($config.ContainsKey("EMAIL_ENABLED")) { $config["EMAIL_ENABLED"] } else { "false" }
+
+    if ($telegramEnabled -eq "true") {
+        $createTelegram = Read-Host "Create Telegram bot token secret? (y/N)"
+        if ($createTelegram -match "^[Yy]$") {
+            $null = New-DockerSecret -SecretName "STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN" -Description "Telegram bot token"
+        }
+    } else {
+        Write-Host "[INFO] TELEGRAM_ENABLED=false: skipping Telegram secret prompt" -ForegroundColor Gray
     }
-    
-    $createEmail = Read-Host "Create Email password secret? (y/N)"
-    if ($createEmail -match "^[Yy]$") {
-        New-DockerSecret -SecretName "STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD" -Description "Email SMTP password"
+
+    if ($emailEnabled -eq "true") {
+        $createEmail = Read-Host "Create Email password secret? (y/N)"
+        if ($createEmail -match "^[Yy]$") {
+            $null = New-DockerSecret -SecretName "STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD" -Description "Email SMTP password"
+        }
+    } else {
+        Write-Host "[INFO] EMAIL_ENABLED=false: skipping Email secret prompt" -ForegroundColor Gray
     }
 }
 

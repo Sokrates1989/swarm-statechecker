@@ -59,8 +59,8 @@ function Get-CurrentEnvValues {
         "PROXY_TYPE" = "traefik"
         "TRAEFIK_NETWORK_NAME" = "traefik"
         "API_URL" = "api.statechecker.domain.de"
-        "WEB_URL" = "web.statechecker.domain.de"
-        "PHPMYADMIN_URL" = "phpmyadmin.statechecker.domain.de"
+        "WEB_URL" = "statechecker.domain.de"
+        "PHPMYADMIN_URL" = "pma.statechecker.domain.de"
         "WEB_PORT" = "8080"
         "PHPMYADMIN_PORT" = "8081"
         "IMAGE_NAME" = "sokrates1989/statechecker"
@@ -122,10 +122,10 @@ function Prompt-ProxyConfig {
         $apiUrl = Read-DomainWithValidation -Prompt "API_URL (Traefik Host)" -Default $Current['API_URL'] -Example "api.statechecker.example.com"
         Update-EnvValue -EnvFile $EnvFile -Key "API_URL" -Value $apiUrl | Out-Null
 
-        $webUrl = Read-DomainWithValidation -Prompt "WEB_URL (Traefik Host)" -Default $Current['WEB_URL'] -Example "web.statechecker.example.com"
+        $webUrl = Read-DomainWithValidation -Prompt "WEB_URL (Traefik Host)" -Default $Current['WEB_URL'] -Example "statechecker.example.com"
         Update-EnvValue -EnvFile $EnvFile -Key "WEB_URL" -Value $webUrl | Out-Null
 
-        $pmaUrl = Read-DomainWithValidation -Prompt "PHPMYADMIN_URL (Traefik Host)" -Default $Current['PHPMYADMIN_URL'] -Example "phpmyadmin.statechecker.example.com"
+        $pmaUrl = Read-DomainWithValidation -Prompt "PHPMYADMIN_URL (Traefik Host)" -Default $Current['PHPMYADMIN_URL'] -Example "pma.statechecker.example.com"
         Update-EnvValue -EnvFile $EnvFile -Key "PHPMYADMIN_URL" -Value $pmaUrl | Out-Null
     }
 }

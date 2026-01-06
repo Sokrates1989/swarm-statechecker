@@ -25,8 +25,6 @@ services:
       - traefik
     volumes:
       - ${DATA_ROOT}/logs/api:/code/logs
-    ports:
-      - "${API_PORT}:${API_PORT}"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:${API_PORT}/health || exit 1"]
       interval: 30s

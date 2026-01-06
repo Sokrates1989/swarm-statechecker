@@ -171,6 +171,128 @@ function Test-SecretExists {
     return ($LASTEXITCODE -eq 0)
 }
 
+function Get-StackNameForSecretOps {
+    <#
+    .SYNOPSIS
+        Determines the stack name to use for secret recreation safety checks.
+
+    .OUTPUTS
+        System.String
+    #>
+
+    if (Test-Path .env) {
+        try {
+            $line = Select-String -Path .env -Pattern '^STACK_NAME=' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($line) {
+                $val = ($line.Line -split '=', 2)[1].Trim().Trim('"')
+                if (-not [string]::IsNullOrWhiteSpace($val)) { return $val }
+            }
+        } catch {
+        }
+    }
+
+    return "statechecker"
+}
+
+function Test-StackRunningForSecretOps {
+    <#
+    .SYNOPSIS
+        Checks whether a Docker Swarm stack is currently deployed.
+
+    .PARAMETER StackName
+        Stack name to check.
+
+    .OUTPUTS
+        System.Boolean
+    #>
+
+    param([string]$StackName)
+    if ([string]::IsNullOrWhiteSpace($StackName)) { return $false }
+
+    try {
+        $names = docker stack ls --format '{{.Name}}' 2>$null
+        return @($names) -contains $StackName
+    } catch {
+        return $false
+    }
+}
+
+function Wait-ForStackRemovalForSecretOps {
+    <#
+    .SYNOPSIS
+        Waits for a stack to be removed (best-effort).
+
+    .PARAMETER StackName
+        Stack name to wait for.
+
+    .PARAMETER TimeoutSeconds
+        Maximum time to wait.
+
+    .OUTPUTS
+        System.Boolean
+    #>
+
+    param(
+        [Parameter(Mandatory = $true)][string]$StackName,
+        [Parameter(Mandatory = $false)][int]$TimeoutSeconds = 120
+    )
+
+    $elapsed = 0
+    while ($elapsed -lt $TimeoutSeconds) {
+        if (-not (Test-StackRunningForSecretOps -StackName $StackName)) { return $true }
+        Start-Sleep -Seconds 2
+        $elapsed += 2
+    }
+    return $false
+}
+
+function Ensure-StackRemovedForSecretRecreate {
+    <#
+    .SYNOPSIS
+        Ensures a running stack is removed before deleting/recreating secrets.
+
+    .PARAMETER SecretName
+        Secret that is being recreated.
+
+    .PARAMETER StackName
+        Stack name to potentially remove.
+
+    .OUTPUTS
+        System.Boolean
+    #>
+
+    param(
+        [Parameter(Mandatory = $true)][string]$SecretName,
+        [Parameter(Mandatory = $true)][string]$StackName
+    )
+
+    if (-not (Test-StackRunningForSecretOps -StackName $StackName)) { return $true }
+
+    Write-Host "" 
+    Write-Host "[WARN] Stack '$StackName' is currently running and may be using Docker secrets." -ForegroundColor Yellow
+    Write-Host "       Docker secrets cannot be removed while in use by running services." -ForegroundColor Gray
+    Write-Host "" 
+    Write-Host "       To recreate secret '$SecretName', the stack must be removed first." -ForegroundColor Gray
+    Write-Host "" 
+
+    $remove = Read-Host "Remove stack '$StackName' now? (y/N)"
+    if ($remove -notmatch '^[Yy]$') {
+        Write-Host "[SKIP] Keeping stack running. Cannot recreate secret." -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host "Removing stack '$StackName'..." -ForegroundColor Yellow
+    try { docker stack rm $StackName 2>$null | Out-Null } catch {}
+
+    if (Wait-ForStackRemovalForSecretOps -StackName $StackName -TimeoutSeconds 120) {
+        Start-Sleep -Seconds 2
+        return $true
+    }
+
+    Write-Host "[WARN] Stack removal taking longer than expected. Please wait and retry." -ForegroundColor Yellow
+    return $false
+}
+
 function New-DockerSecret {
     <#
     .SYNOPSIS
@@ -204,16 +326,35 @@ function New-DockerSecret {
         Write-Host "[ERROR] Secret value cannot be empty" -ForegroundColor Red
         return $false
     }
-    
+
+    if (Test-SecretExists -SecretName $SecretName) {
+        $recreate = Read-Host "Secret '$SecretName' already exists. Delete and recreate? (y/N)"
+        if ($recreate -notmatch '^[Yy]$') {
+            Write-Host "[SKIP] Keeping existing secret: $SecretName" -ForegroundColor Yellow
+            return $true
+        }
+
+        $stackName = Get-StackNameForSecretOps
+        if (-not (Ensure-StackRemovedForSecretRecreate -SecretName $SecretName -StackName $stackName)) {
+            return $false
+        }
+
+        try { docker secret rm $SecretName 2>$null | Out-Null } catch {}
+        if (Test-SecretExists -SecretName $SecretName) {
+            Write-Host "[ERROR] Failed to remove secret: $SecretName (may still be in use)" -ForegroundColor Red
+            return $false
+        }
+    }
+
     $secretValue | docker secret create $SecretName -
-    
+
     if ($LASTEXITCODE -eq 0) {
         Write-Host "[OK] Secret created: $SecretName" -ForegroundColor Green
         return $true
-    } else {
-        Write-Host "[ERROR] Failed to create secret: $SecretName" -ForegroundColor Red
-        return $false
     }
+
+    Write-Host "[ERROR] Failed to create secret: $SecretName" -ForegroundColor Red
+    return $false
 }
 
 function Get-SecretList {
@@ -293,6 +434,7 @@ function New-SecretsFromFile {
         return $false
     }
 
+    $stackName = Get-StackNameForSecretOps
     $lines = Get-Content $SecretsFile -ErrorAction SilentlyContinue
     foreach ($line in $lines) {
         $trim = $line.Trim()
@@ -307,26 +449,21 @@ function New-SecretsFromFile {
         if ([string]::IsNullOrWhiteSpace($key)) { continue }
         if ([string]::IsNullOrWhiteSpace($value)) { continue }
 
-        if ($key -eq "STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON" -and (Test-Path $value)) {
-            if (Test-SecretExists -SecretName $key) {
-                $recreate = Read-Host "Secret '$key' exists. Delete and recreate? (y/N)"
-                if ($recreate -match '^[Yy]$') {
-                    docker secret rm $key 2>$null | Out-Null
-                } else {
-                    continue
-                }
-            }
-            docker secret create $key $value 2>$null | Out-Null
-            continue
-        }
-
         if (Test-SecretExists -SecretName $key) {
             $recreate = Read-Host "Secret '$key' exists. Delete and recreate? (y/N)"
             if ($recreate -match '^[Yy]$') {
+                if (-not (Ensure-StackRemovedForSecretRecreate -SecretName $key -StackName $stackName)) {
+                    return $false
+                }
                 docker secret rm $key 2>$null | Out-Null
             } else {
                 continue
             }
+        }
+
+        if ($key -eq "STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON" -and (Test-Path $value)) {
+            docker secret create $key $value 2>$null | Out-Null
+            continue
         }
 
         $value | docker secret create $key - 2>$null | Out-Null
