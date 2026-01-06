@@ -22,7 +22,6 @@ function Test-SetupComplete {
     System.Boolean
     #>
     if (Test-Path "$ProjectRoot\.setup-complete") { return $true }
-    if (Test-Path "$ProjectRoot\.env") { return $true }
     return $false
 }
 

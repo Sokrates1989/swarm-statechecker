@@ -25,8 +25,45 @@ is_setup_complete() {
     if [ -f "$PROJECT_ROOT/.setup-complete" ]; then
         return 0
     fi
+    return 1
+}
 
-    if [ -f "$PROJECT_ROOT/.env" ]; then
+_validate_website_domain_or_path() {
+    # _validate_website_domain_or_path
+    # Validates a domain or domain+path+port like example.com, example.com/path, example.com:8443/path.
+    local value="$1"
+    local pattern='^[A-Za-z0-9.-]+\.[A-Za-z]{2,}(:[0-9]{1,5})?([/?#].*)?$'
+    [[ "$value" =~ $pattern ]]
+}
+
+_validate_http_url() {
+    # _validate_http_url
+    # Validates a URL with http/https scheme.
+    local value="$1"
+    local pattern='^https?://[A-Za-z0-9.-]+\.[A-Za-z]{2,}(:[0-9]{1,5})?([/?#].*)?$'
+    [[ "$value" =~ $pattern ]]
+}
+
+_expand_website_to_monitor_urls() {
+    # _expand_website_to_monitor_urls
+    # Accepts either a full URL (http/https) or a domain.
+    # If a domain is provided, returns both https:// and http:// URLs (one per line).
+    local raw="$1"
+    raw="${raw//$'\r'/}"
+    raw="${raw#${raw%%[![:space:]]*}}"
+    raw="${raw%${raw##*[![:space:]]}}"
+
+    if [[ "$raw" =~ ^https?:// ]]; then
+        if _validate_http_url "$raw"; then
+            printf '%s\n' "$raw"
+            return 0
+        fi
+        return 1
+    fi
+
+    if _validate_website_domain_or_path "$raw"; then
+        printf '%s\n' "https://$raw"
+        printf '%s\n' "http://$raw"
         return 0
     fi
 
@@ -244,24 +281,41 @@ _prompt_websites_to_check() {
     # Returns:
     # - A JSON array string (e.g. ["https://a","https://b"]) via stdout
     local websites=()
+    local -A website_seen
     local input_url=""
 
     echo ""
-    echo "[CONFIG] Websites to Check"
-    echo "Enter one website URL per prompt. Leave empty to finish."
+    echo "[CONFIG] Websites to Monitor"
+    echo "Enter websites you want to monitor (one per prompt)."
+    echo "You can enter either a full URL (https://example.com/path) or just a domain (example.com)."
+    echo "If you enter only a domain, both https:// and http:// will be checked."
     echo ""
 
     while true; do
-        read_prompt "Website URL (empty to finish): " input_url
+        read_prompt "Website to monitor (URL or domain; empty to finish): " input_url
         input_url="${input_url%$'\r'}"
         if [ -z "$input_url" ]; then
             if [ ${#websites[@]} -eq 0 ]; then
-                echo "[WARN] Please enter at least one website URL (e.g., https://example.com)" >&2
+                echo "[WARN] Please enter at least one website to monitor (e.g., https://example.com or example.com)" >&2
                 continue
             fi
             break
         fi
-        websites+=("$input_url")
+
+        local expanded
+        if ! expanded=$(_expand_website_to_monitor_urls "$input_url"); then
+            echo "[WARN] Please enter a valid URL (http:// or https://) or a valid domain like example.com" >&2
+            continue
+        fi
+
+        local url
+        while IFS= read -r url; do
+            url="${url//$'\r'/}"
+            if [ -n "$url" ] && [ -z "${website_seen[$url]+x}" ]; then
+                websites+=("$url")
+                website_seen[$url]=1
+            fi
+        done <<< "$expanded"
     done
 
     local json="["
@@ -293,22 +347,26 @@ _update_statechecker_server_config() {
     local tz check_web_every check_gd_every status_offset
     local telegram_err telegram_info telegram_status
 
-    tz=$(grep '^TIMEZONE=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
-    check_web_every=$(grep '^CHECK_WEBSITES_EVERY_X_MINUTES=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
-    check_gd_every=$(grep '^CHECK_GOOGLEDRIVE_EVERY_X_MINUTES=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
-    status_offset=$(grep '^STATUS_MESSAGES_TIME_OFFSET_PERCENTAGE=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    tz=$(grep '^TIMEZONE=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"\r')
+    check_web_every=$(grep '^CHECK_WEBSITES_EVERY_X_MINUTES=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"\r')
+    check_gd_every=$(grep '^CHECK_GOOGLEDRIVE_EVERY_X_MINUTES=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"\r')
+    status_offset=$(grep '^STATUS_MESSAGES_TIME_OFFSET_PERCENTAGE=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"\r')
 
-    telegram_err=$(grep '^TELEGRAM_RECIPIENTS_ERROR_CHAT_IDS=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
-    telegram_info=$(grep '^TELEGRAM_RECIPIENTS_INFO_CHAT_IDS=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
-    telegram_status=$(grep '^TELEGRAM_STATUS_MESSAGES_EVERY_X_MINUTES=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    telegram_err=$(grep '^TELEGRAM_RECIPIENTS_ERROR_CHAT_IDS=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"\r')
+    telegram_info=$(grep '^TELEGRAM_RECIPIENTS_INFO_CHAT_IDS=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"\r')
+    telegram_status=$(grep '^TELEGRAM_STATUS_MESSAGES_EVERY_X_MINUTES=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"\r')
 
     check_web_every="${check_web_every:-30}"
     check_gd_every="${check_gd_every:-60}"
     status_offset="${status_offset:-2.5}"
     telegram_status="${telegram_status:-60}"
 
+    websites_json_array="${websites_json_array//$'\r'/}"
+
     local config_json
     config_json="{\"toolsUsingApi_tolerancePeriod_inSeconds\":\"100\",\"telegram\":{\"botToken\":\"USE_SECRET_INSTEAD\",\"errorChatID\":\"${telegram_err}\",\"infoChatID\":\"${telegram_info}\",\"adminStatusMessage_everyXMinutes\":\"${telegram_status}\",\"adminStatusMessage_operationTime_offsetPercentage\":\"${status_offset}\"},\"websites\":{\"checkWebSitesEveryXMinutes\":${check_web_every},\"websitesToCheck\":${websites_json_array}},\"googleDrive\":{\"checkFilesEveryXMinutes\":${check_gd_every},\"foldersToCheck\":[]}}"
+
+    config_json="${config_json//$'\r'/}"
 
     update_env_values "$env_file" "STATECHECKER_SERVER_CONFIG" "$config_json"
 }

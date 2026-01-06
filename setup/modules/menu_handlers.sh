@@ -302,6 +302,9 @@ update_env_values() {
         return 1
     fi
 
+    value="${value//$'\r'/}"
+    value="${value//$'\n'/}"
+
     local quoted_value
     quoted_value="$value"
     quoted_value="${quoted_value//\\/\\\\}"
