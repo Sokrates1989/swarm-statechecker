@@ -740,14 +740,89 @@ create_optional_secrets_menu() {
     
     read_prompt "Create Google Drive service account secret? (y/N): " create_gdrive
     if [[ "$create_gdrive" =~ ^[Yy]$ ]]; then
-        echo "For Google Drive, you need to provide the JSON file path"
-        read_prompt "Path to service account JSON file: " json_path
-        if [ -f "$json_path" ]; then
-            create_secret_from_file "STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON" "$json_path" || true
-        else
-            echo "❌ File not found: $json_path"
-        fi
+        _create_google_drive_secret || true
     fi
+}
+
+_create_google_drive_secret() {
+    # _create_google_drive_secret
+    # Creates the Google Drive service account JSON secret from a file.
+    # Offers to create the file if it doesn't exist (user pastes JSON into editor).
+    local secret_name="STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"
+    local default_json_path="./service_account_key.json"
+    
+    echo ""
+    echo "📁 Google Drive Service Account JSON Secret"
+    echo "============================================"
+    echo ""
+    echo "Options:"
+    echo "1) Provide path to existing service_account_key.json file"
+    echo "2) Create new file and paste JSON content (recommended)"
+    echo "3) Skip"
+    echo ""
+    read_prompt "Your choice (1-3) [2]: " gdrive_choice
+    gdrive_choice="${gdrive_choice:-2}"
+    
+    case "$gdrive_choice" in
+        1)
+            read_prompt "Path to service account JSON file: " json_path
+            if [ -f "$json_path" ]; then
+                create_secret_from_file "$secret_name" "$json_path" || return 1
+                echo ""
+                read_prompt "Delete the JSON file now? (recommended for security) (Y/n): " delete_json
+                if [[ ! "$delete_json" =~ ^[Nn]$ ]]; then
+                    rm -f "$json_path" 2>/dev/null && echo "✅ Deleted $json_path"
+                fi
+            else
+                echo "❌ File not found: $json_path"
+                return 1
+            fi
+            ;;
+        2)
+            echo ""
+            echo "Creating $default_json_path for you to paste your JSON content."
+            echo ""
+            echo "Instructions:"
+            echo "  1. The editor will open with an empty file"
+            echo "  2. Paste your complete Google service account JSON"
+            echo "  3. Save and close the editor"
+            echo ""
+            
+            # Create empty file
+            : > "$default_json_path"
+            
+            # Open in editor
+            if [ -z "${WIZARD_EDITOR:-}" ]; then
+                wizard_choose_editor || true
+            fi
+            if [ -n "${WIZARD_EDITOR:-}" ]; then
+                wizard_edit_file "$default_json_path" "$WIZARD_EDITOR"
+            else
+                echo "No editor configured. Please paste JSON into $default_json_path manually."
+                read_prompt "Press Enter when done..."
+            fi
+            
+            # Validate JSON is not empty
+            if [ ! -s "$default_json_path" ]; then
+                echo "❌ File is empty. Secret not created."
+                rm -f "$default_json_path" 2>/dev/null
+                return 1
+            fi
+            
+            # Create secret from file
+            create_secret_from_file "$secret_name" "$default_json_path" || { rm -f "$default_json_path" 2>/dev/null; return 1; }
+            
+            # Always delete the JSON file after creating secret
+            rm -f "$default_json_path" 2>/dev/null
+            echo "✅ Deleted $default_json_path (secret is now stored securely in Docker)"
+            ;;
+        3|*)
+            echo "[SKIP] Google Drive secret not created"
+            return 0
+            ;;
+    esac
+    
+    return 0
 }
 
 _print_main_menu_text() {
@@ -818,9 +893,11 @@ _handle_main_menu_choice() {
         7) scale_services_menu ;;
         8) toggle_phpmyadmin ;;
         9)
-            if [ -f "$SCRIPT_DIR/setup-wizard.sh" ]; then bash "$SCRIPT_DIR/setup-wizard.sh"
-            elif [ -f "$PROJECT_ROOT/setup/setup-wizard.sh" ]; then bash "$PROJECT_ROOT/setup/setup-wizard.sh"
-            else echo "❌ Setup wizard not found"; fi
+            if [ -f "./setup/setup-wizard.sh" ]; then
+                bash "./setup/setup-wizard.sh"
+            else
+                echo "❌ Setup wizard not found at ./setup/setup-wizard.sh"
+            fi
             ;;
         10) check_required_secrets; check_optional_secrets ;;
         11) create_required_secrets_menu ;;

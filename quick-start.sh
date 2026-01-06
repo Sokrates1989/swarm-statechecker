@@ -55,9 +55,33 @@ if [ ! -f .setup-complete ]; then
             wizard_edit_file "$(pwd)/secrets.env" "$WIZARD_EDITOR"
         fi
 
+        # Create secrets from secrets.env
+        if [ -f secrets.env ]; then
+            echo ""
+            create_secrets_from_env_file "secrets.env" "setup/secrets.env.template" || true
+        fi
+
+        # Mark setup complete
+        : > "$SCRIPT_DIR/.setup-complete"
+
+        # Ask to deploy
         echo ""
-        echo "[OK] Files prepared. You can now re-run ./quick-start.sh or run the setup wizard later."
+        read -p "Deploy the stack now? (Y/n): " deploy_now
+        if [[ ! "$deploy_now" =~ ^[Nn]$ ]]; then
+            echo ""
+            load_env || true
+            deploy_stack || true
+
+            if command -v check_deployment_health >/dev/null 2>&1; then
+                echo ""
+                echo "[INFO] Waiting 20s before the first health check (services may still be initializing)..."
+                check_deployment_health "${STACK_NAME:-statechecker}" "${PROXY_TYPE:-traefik}" 20 "30m" "200" || true
+            fi
+        fi
+
         echo ""
+        echo "✅ Setup complete. You can now run ./quick-start.sh to manage the stack."
+        exit 0
     else
         if [ -f "$SETUP_DIR/setup-wizard.sh" ]; then
             read -p "Run setup wizard now? (Y/n): " run_wizard
