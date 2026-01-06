@@ -487,10 +487,14 @@ create_secrets_from_env_file() {
 
     if [[ -r /dev/tty ]]; then
         echo ""
-        read -r -p "Delete $secrets_file now? (recommended) (y/N): " delete_secrets_file < /dev/tty
+        read -r -p "Delete $secrets_file now? (recommended) (Y/n): " delete_secrets_file < /dev/tty
+        delete_secrets_file="${delete_secrets_file:-Y}"
         if [[ "$delete_secrets_file" =~ ^[Yy]$ ]]; then
             rm -f "$secrets_file" 2>/dev/null || true
             echo "✅ Deleted $secrets_file"
+        else
+            echo "⚠️  [WARN] $secrets_file still exists and may contain sensitive values." >&2
+            echo "       Please delete it soon: rm -f \"$secrets_file\"" >&2
         fi
     fi
 }

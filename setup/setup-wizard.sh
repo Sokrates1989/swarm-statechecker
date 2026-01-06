@@ -12,6 +12,7 @@ cd "$PROJECT_ROOT"
 # Source helper modules (re-use existing helpers)
 source "$SCRIPT_DIR/modules/docker_helpers.sh"
 source "$SCRIPT_DIR/modules/menu_handlers.sh"
+source "$SCRIPT_DIR/modules/health-check.sh"
 source "$SCRIPT_DIR/modules/data-dirs.sh"
 source "$SCRIPT_DIR/modules/wizard.sh"
 
@@ -299,12 +300,12 @@ _prompt_websites_to_check() {
     local -A website_seen
     local input_url=""
 
-    echo ""
-    echo "[CONFIG] Websites to Monitor"
-    echo "Enter websites you want to monitor (one per prompt)."
-    echo "You can enter either a full URL (https://example.com/path) or just a domain (example.com)."
-    echo "If you enter only a domain, both https:// and http:// will be checked."
-    echo ""
+    echo "" >&2
+    echo "[CONFIG] Websites to Monitor" >&2
+    echo "Enter websites you want to monitor (one per prompt)." >&2
+    echo "You can enter either a full URL (https://example.com/path) or just a domain (example.com)." >&2
+    echo "If you enter only a domain, both https:// and http:// will be checked." >&2
+    echo "" >&2
 
     while true; do
         read_prompt "Website to monitor (URL or domain; empty to finish): " input_url
@@ -350,7 +351,12 @@ _prompt_websites_to_check() {
     done
     json+="]"
 
-    echo "$json"
+    if [[ ! "$json" =~ ^\[.*\]$ ]]; then
+        echo "[ERROR] Internal error: websites list is not a JSON array." >&2
+        return 1
+    fi
+
+    printf '%s\n' "$json"
 }
 
 _update_statechecker_server_config() {
@@ -425,7 +431,10 @@ prompt_update_env_values() {
     _prompt_email_config "$env_file"
 
     local websites_json
-    websites_json=$(_prompt_websites_to_check)
+    if ! websites_json=$(_prompt_websites_to_check); then
+        echo "❌ [ERROR] Failed to collect websites list. Aborting wizard." >&2
+        exit 1
+    fi
     _update_statechecker_server_config "$env_file" "$websites_json"
 }
 

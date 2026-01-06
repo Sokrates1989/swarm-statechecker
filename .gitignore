@@ -13,6 +13,9 @@ secrets.env
 # Setup completion marker
 .setup-complete
 
+# Wizard editor preference
+.wizard-editor
+
 # Temporary rendered stack file (created during deploy)
 .stack-deploy-temp.yml
 
@@ -23,10 +26,8 @@ messageSentStates
 service_account_key.json
 
 
-# Ignore database data, but keep directory itself (by keeping .gitkeep file)
-db_data/*
-!db_data/.gitkeep
-
+# Ignore database data (MySQL writes into this directory during runtime)
+db_data/
 
 # Do not version api logs. 
 logs/api/*
