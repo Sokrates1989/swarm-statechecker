@@ -125,6 +125,7 @@ _prompt_domain_with_validation() {
         fi
         
         if _validate_domain "$result"; then
+            # Output only the result to stdout for capture
             echo "$result"
             return 0
         else
@@ -143,13 +144,13 @@ _prompt_ssl_mode() {
     # - "proxy" if Traefik is behind another TLS terminator
     local current_ssl_mode="$1"
     
-    echo ""
-    echo "[CONFIG] SSL Termination Mode"
-    echo "------------------------------"
-    echo "How is SSL/TLS handled in your setup?"
-    echo "1) direct - Traefik handles SSL directly (uses Let's Encrypt)"
-    echo "2) proxy  - Traefik is behind another TLS terminator (e.g., Nginx Proxy Manager)"
-    echo ""
+    echo "" >&2
+    echo "[CONFIG] SSL Termination Mode" >&2
+    echo "------------------------------" >&2
+    echo "How is SSL/TLS handled in your setup?" >&2
+    echo "1) direct - Traefik handles SSL directly (uses Let's Encrypt)" >&2
+    echo "2) proxy  - Traefik is behind another TLS terminator (e.g., Nginx Proxy Manager)" >&2
+    echo "" >&2
     
     local default_choice="1"
     if [ "$current_ssl_mode" = "proxy" ]; then
@@ -206,12 +207,12 @@ _prompt_proxy_config() {
         SSL_MODE=$(_prompt_ssl_mode "${current_ssl_mode:-direct}")
         update_env_values "$env_file" "SSL_MODE" "$SSL_MODE"
 
-        echo ""
-        echo "[CONFIG] Domain Configuration for Traefik"
-        echo "------------------------------------------"
-        echo "Configure the domains for each service. These must be valid FQDNs"
-        echo "pointing to your server (e.g., api.statechecker.example.com)."
-        echo ""
+        echo "" >&2
+        echo "[CONFIG] Domain Configuration for Traefik" >&2
+        echo "------------------------------------------" >&2
+        echo "Configure the domains for each service. These must be valid FQDNs" >&2
+        echo "pointing to your server (e.g., api.statechecker.example.com)." >&2
+        echo "" >&2
 
         local api_domain
         api_domain=$(_prompt_domain_with_validation "API_DOMAIN (Traefik Host)" "${current_api_domain:-api.statechecker.domain.de}" "api.statechecker.example.com")
@@ -352,6 +353,7 @@ _prompt_websites_to_check() {
 
     echo "" >&2
     echo "[CONFIG] Websites to Monitor" >&2
+    echo "---------------------------" >&2
     echo "Enter websites you want to monitor (one per prompt)." >&2
     echo "You can enter either a full URL (https://example.com/path) or just a domain (example.com)." >&2
     echo "If you enter only a domain, both https:// and http:// will be checked." >&2
@@ -380,6 +382,7 @@ _prompt_websites_to_check() {
             if [ -n "$url" ] && [ -z "${website_seen[$url]+x}" ]; then
                 websites+=("$url")
                 website_seen[$url]=1
+                echo "✅ Added: $url" >&2
             fi
         done <<< "$expanded"
     done
@@ -406,6 +409,7 @@ _prompt_websites_to_check() {
         return 1
     fi
 
+    # Return only the JSON to stdout
     printf '%s\n' "$json"
 }
 
@@ -452,7 +456,7 @@ prompt_update_env_values() {
     current_data_root=$(grep '^DATA_ROOT=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
     current_proxy_type=$(grep '^PROXY_TYPE=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
 
-    echo -e "\n==========================\n  Basic configuration\n==========================\n"
+    echo -e "\n==========================\n  Basic configuration\n==========================\n" >&2
 
     local default_stack_name="statechecker"
     read_prompt "Stack name [${current_stack_name:-$default_stack_name}]: " stack_name
@@ -470,11 +474,11 @@ prompt_update_env_values() {
     _prompt_proxy_config "$env_file" "$proxy_type"
     _prompt_image_config "$env_file"
 
-    echo ""
-    echo "=========================="
-    echo "  Notifications & Timezone"
-    echo "=========================="
-    echo ""
+    echo "" >&2
+    echo "==========================" >&2
+    echo "  Notifications & Timezone" >&2
+    echo "==========================" >&2
+    echo "" >&2
 
     _prompt_timezone_config "$env_file"
     _prompt_telegram_config "$env_file"
@@ -498,10 +502,10 @@ main() {
     # main
     # Entry point for the setup wizard.
 
-    echo "=========================================="
-    echo "  Swarm Statechecker - Setup Wizard"
-    echo "=========================================="
-    echo ""
+    echo "==========================================" >&2
+    echo "  Swarm Statechecker - Setup Wizard" >&2
+    echo "==========================================" >&2
+    echo "" >&2
 
     if ! check_docker_swarm; then
         exit 1
@@ -518,10 +522,10 @@ main() {
 
     ensure_env_file || exit 1
 
-    echo "How would you like to configure deployment settings?"
-    echo "1) Edit .env file (built from templates) and let the wizard read values from it"
-    echo "2) Answer questions interactively now (recommended)"
-    echo ""
+    echo "How would you like to configure deployment settings?"  >&2
+    echo "1) Edit .env file (built from templates) and let the wizard read values from it" >&2
+    echo "2) Answer questions interactively now (recommended)" >&2
+    echo "" >&2
     read_prompt "Your choice (1-2) [2]: " config_mode
     config_mode="${config_mode:-2}"
 
@@ -544,14 +548,19 @@ main() {
 
         if [ "$PROXY_TYPE" = "traefik" ]; then
             if [ -z "${TRAEFIK_NETWORK:-}" ]; then
-                traefik_network=$(prompt_traefik_network "traefik")
-                update_env_values "$PROJECT_ROOT/.env" "TRAEFIK_NETWORK" "$traefik_network"
+                local detected_net
+                detected_net=$(prompt_traefik_network "traefik")
+                update_env_values "$PROJECT_ROOT/.env" "TRAEFIK_NETWORK" "$detected_net"
             fi
 
             if [ -z "${SSL_MODE:-}" ]; then
-                SSL_MODE=$(_prompt_ssl_mode "direct")
-                update_env_values "$PROJECT_ROOT/.env" "SSL_MODE" "$SSL_MODE"
+                local chosen_ssl
+                chosen_ssl=$(_prompt_ssl_mode "direct")
+                update_env_values "$PROJECT_ROOT/.env" "SSL_MODE" "$chosen_ssl"
             fi
+            
+            # Reload env after updates
+            load_env || true
 
             if [ -z "${API_DOMAIN:-}" ]; then
                 api_domain=$(_prompt_domain_with_validation "API_DOMAIN (Traefik Host)" "api.statechecker.domain.de" "api.statechecker.example.com")
@@ -593,22 +602,22 @@ main() {
     include_pma="true"
     [ "${pma_replicas:-0}" = "0" ] && include_pma="false"
 
-    echo ""
-    echo "[BUILD] Generating swarm-stack.yml from templates..."
+    echo "" >&2
+    echo "[BUILD] Generating swarm-stack.yml from templates..." >&2
     backup_existing_files "$PROJECT_ROOT"
     build_stack_file "${proxy_type:-traefik}" "$PROJECT_ROOT" "${ssl_mode:-direct}" "$include_pma" "true"
 
-    echo ""
-    echo "=========================="
-    echo "  Secrets"
-    echo "=========================="
-    echo ""
+    echo "" >&2
+    echo "==========================" >&2
+    echo "  Secrets" >&2
+    echo "==========================" >&2
+    echo "" >&2
 
-    echo "How do you want to create Docker secrets?"
-    echo "1) Edit secrets.env and create secrets from it (recommended)"
-    echo "2) Create secrets interactively"
-    echo "3) Skip for now"
-    echo ""
+    echo "How do you want to create Docker secrets?" >&2
+    echo "1) Edit secrets.env and create secrets from it (recommended)" >&2
+    echo "2) Create secrets interactively" >&2
+    echo "3) Skip for now" >&2
+    echo "" >&2
     read_prompt "Your choice (1-3) [1]: " secrets_mode
     secrets_mode="${secrets_mode:-1}"
 
@@ -619,9 +628,9 @@ main() {
             if [ ! -f "$secrets_file" ]; then
                 if [ -f "$secrets_template" ]; then
                     cp "$secrets_template" "$secrets_file"
-                    echo "[OK] Created secrets.env from template."
+                    echo "[OK] Created secrets.env from template." >&2
                 else
-                    echo "[ERROR] Missing secrets template: $secrets_template"
+                    echo "[ERROR] Missing secrets template: $secrets_template" >&2
                 fi
             fi
 
@@ -636,7 +645,7 @@ main() {
             ;;
         2)
             create_required_secrets_menu
-            echo ""
+            echo "" >&2
             check_required_secrets || true
 
             read_prompt "Create optional secrets now (Telegram/Email/Google Drive)? (y/N): " create_optional
@@ -650,16 +659,16 @@ main() {
     esac
 
     if ! check_required_secrets; then
-        echo ""
+        echo "" >&2
         echo "[WARN] Some required secrets are still missing. Stack deploy may fail until they exist." >&2
     fi
 
     mark_setup_complete
 
-    echo ""
+    echo "" >&2
     read_prompt "Deploy the stack now? (Y/n): " deploy_now
     if [[ ! "$deploy_now" =~ ^[Nn]$ ]]; then
-        echo ""
+        echo "" >&2
         deploy_stack || true
 
         if command -v check_deployment_health >/dev/null 2>&1; then
@@ -669,8 +678,8 @@ main() {
         fi
     fi
 
-    echo ""
-    echo "✅ Setup complete. You can now run ./quick-start.sh to manage the stack."
+    echo "" >&2
+    echo "✅ Setup complete. You can now run ./quick-start.sh to manage the stack." >&2
 }
 
 main "$@"

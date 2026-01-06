@@ -79,11 +79,13 @@ prompt_traefik_network() {
         echo "[WARN] No overlay networks found" >&2
         echo "You need a Traefik public overlay network before deploying this stack." >&2
         echo "" >&2
+        local input_net
         if [[ -r /dev/tty ]]; then
             read -r -p "Traefik network name [$default_network]: " input_net < /dev/tty
         else
             read -r -p "Traefik network name [$default_network]: " input_net
         fi
+        # Return only the value to stdout
         echo "${input_net:-$default_network}"
         return 0
     fi
@@ -136,6 +138,7 @@ prompt_traefik_network() {
     # Check if it's a number
     if [[ "$selection" =~ ^[0-9]+$ ]]; then
         if [ "$selection" -eq 0 ]; then
+            local network_name
             if [[ -r /dev/tty ]]; then
                 read -r -p "Network name [$default_network]: " network_name < /dev/tty
             else
