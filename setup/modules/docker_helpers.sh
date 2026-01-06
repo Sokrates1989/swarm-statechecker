@@ -431,22 +431,29 @@ create_secrets_from_env_file() {
         if [ -f "$template_file" ]; then
             cp "$template_file" "$secrets_file"
             echo "✅ Created $secrets_file from template: $template_file"
-            echo "⚠️  Please edit $secrets_file and re-run this action."
             read -p "Open $secrets_file in editor now? (Y/n): " open_file
             if [[ ! "$open_file" =~ ^[Nn]$ ]]; then
-                if command -v nano &> /dev/null; then
-                    nano "$secrets_file"
-                elif command -v vim &> /dev/null; then
-                    vim "$secrets_file"
+                if type wizard_choose_editor >/dev/null 2>&1 && type wizard_edit_file >/dev/null 2>&1; then
+                    if [ -z "${WIZARD_EDITOR:-}" ]; then
+                        wizard_choose_editor || true
+                    fi
+                    if [ -n "${WIZARD_EDITOR:-}" ]; then
+                        wizard_edit_file "$secrets_file" "$WIZARD_EDITOR"
+                    fi
                 else
-                    echo "No editor found. Please edit $secrets_file manually."
+                    if command -v nano &> /dev/null; then
+                        nano "$secrets_file"
+                    elif command -v vim &> /dev/null; then
+                        vim "$secrets_file"
+                    else
+                        echo "No editor found. Please edit $secrets_file manually."
+                    fi
                 fi
             fi
+        else
+            echo "❌ Secrets template not found: $template_file"
             return 1
         fi
-
-        echo "❌ Secrets template not found: $template_file"
-        return 1
     fi
 
     local key value

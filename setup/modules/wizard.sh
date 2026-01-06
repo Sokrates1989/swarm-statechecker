@@ -18,7 +18,44 @@ wizard_show_editor_instructions() {
     echo ""
 }
 
+wizard_load_saved_editor() {
+    # wizard_load_saved_editor
+    # Loads WIZARD_EDITOR from a persisted local file if not already set.
+    #
+    # Returns:
+    # - 0 if editor is available (already set or loaded)
+    # - 1 otherwise
+    if [ -n "${WIZARD_EDITOR:-}" ]; then
+        return 0
+    fi
+
+    if [ -f .wizard-editor ]; then
+        local saved
+        saved=$(cat .wizard-editor 2>/dev/null | tr -d '\r\n')
+        case "$saved" in
+            nano|vi|vim)
+                WIZARD_EDITOR="$saved"
+                return 0
+                ;;
+        esac
+    fi
+
+    return 1
+}
+
+wizard_save_editor() {
+    # wizard_save_editor
+    # Persists WIZARD_EDITOR selection into a local file for future runs.
+    if [ -n "${WIZARD_EDITOR:-}" ]; then
+        printf '%s\n' "$WIZARD_EDITOR" > .wizard-editor 2>/dev/null || true
+    fi
+}
+
 wizard_choose_editor() {
+    if wizard_load_saved_editor; then
+        return 0
+    fi
+
     while true; do
         echo "Which editor would you like to use?"
         echo "1) nano (easier for beginners)"
@@ -35,6 +72,7 @@ wizard_choose_editor() {
                     echo "[WARN] nano not found, falling back to vi"
                     WIZARD_EDITOR="vi"
                 fi
+                wizard_save_editor
                 return 0
                 ;;
             2)
@@ -46,6 +84,7 @@ wizard_choose_editor() {
                     echo "[ERROR] vi/vim not found"
                     return 1
                 fi
+                wizard_save_editor
                 return 0
                 ;;
             *)

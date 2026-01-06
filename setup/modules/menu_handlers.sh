@@ -15,6 +15,50 @@ read_prompt() {
     fi
 }
 
+_sanitize_env_file_statechecker_config() {
+    # _sanitize_env_file_statechecker_config
+    # Removes leftover multiline JSON blocks from older templates for STATECHECKER_SERVER_CONFIG.
+    # Those lines are not valid dotenv syntax and can break both `source .env` and `docker compose --env-file`.
+    if [ ! -f .env ]; then
+        return 0
+    fi
+
+    if ! grep -q '^STATECHECKER_SERVER_CONFIG=' .env 2>/dev/null; then
+        return 0
+    fi
+
+    if ! grep -q '^STATECHECKER_SERVER_CONFIG=.*\{.*' .env 2>/dev/null; then
+        return 0
+    fi
+
+    local tmp_file
+    tmp_file=".env.tmp.$$"
+
+    awk '
+        BEGIN { in_cfg=0 }
+        {
+            if (in_cfg == 1) {
+                if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*=/ || $0 ~ /^#/ || $0 ~ /^\s*$/) {
+                    in_cfg=0
+                    print $0
+                }
+                next
+            }
+
+            if ($0 ~ /^STATECHECKER_SERVER_CONFIG=/) {
+                print $0
+                in_cfg=1
+                next
+            }
+
+            print $0
+        }
+    ' .env > "$tmp_file"
+
+    mv "$tmp_file" .env
+    return 0
+}
+
 check_stack_health() {
     # check_stack_health
     # Runs a health check using setup/modules/health-check.sh.
@@ -277,9 +321,14 @@ load_env() {
     # - 0 if .env exists and was loaded
     # - 1 if .env does not exist
     if [ -f .env ]; then
-        set -a
-        source .env
-        set +a
+        _sanitize_env_file_statechecker_config || true
+        local env_lines
+        env_lines=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' .env 2>/dev/null | grep -v '^STATECHECKER_SERVER_CONFIG=' | sed 's/\r$//' || true)
+        if [ -n "$env_lines" ]; then
+            set -a
+            source <(printf '%s\n' "$env_lines")
+            set +a
+        fi
         return 0
     else
         return 1
@@ -318,6 +367,32 @@ update_env_values() {
 
     local sed_replacement
     sed_replacement=$(printf '%s' "$line_replacement" | sed 's/[\\&|]/\\\\&/g')
+
+    if [ "$key" = "STATECHECKER_SERVER_CONFIG" ] && [ -f "$env_file" ] && grep -q "^${key}=" "$env_file" 2>/dev/null; then
+        local repl_file tmp_file
+        repl_file="${env_file}.repl.$$"
+        tmp_file="${env_file}.tmp.$$"
+        printf '%s\n' "$line_replacement" > "$repl_file"
+        awk -v key="$key" -v repl_file="$repl_file" '
+            BEGIN { skip=0 }
+            {
+                if (skip == 1) {
+                    if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { skip=0; print $0 }
+                    next
+                }
+                if ($0 ~ ("^" key "=")) {
+                    while ((getline r < repl_file) > 0) { print r }
+                    close(repl_file)
+                    skip=1
+                    next
+                }
+                print $0
+            }
+        ' "$env_file" > "$tmp_file"
+        mv "$tmp_file" "$env_file"
+        rm -f "$repl_file" 2>/dev/null || true
+        return 0
+    fi
 
     if [ ! -f "$env_file" ]; then
         printf '%s\n' "$line_replacement" >> "$env_file"

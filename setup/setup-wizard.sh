@@ -457,9 +457,7 @@ main() {
         fi
         wizard_edit_file "$PROJECT_ROOT/.env" "$WIZARD_EDITOR"
 
-        set -a
-        source "$PROJECT_ROOT/.env"
-        set +a
+        load_env || true
 
         STACK_NAME="${STACK_NAME:-statechecker}"
         DATA_ROOT="${DATA_ROOT:-$PROJECT_ROOT}"
@@ -512,29 +510,54 @@ main() {
     echo "=========================="
     echo ""
 
+    echo "How do you want to create Docker secrets?"
+    echo "1) Edit secrets.env and create secrets from it (recommended)"
+    echo "2) Create secrets interactively"
+    echo "3) Skip for now"
+    echo ""
+    read_prompt "Your choice (1-3) [1]: " secrets_mode
+    secrets_mode="${secrets_mode:-1}"
+
+    case "$secrets_mode" in
+        1)
+            local secrets_file="$PROJECT_ROOT/secrets.env"
+            local secrets_template="$SCRIPT_DIR/secrets.env.template"
+            if [ ! -f "$secrets_file" ]; then
+                if [ -f "$secrets_template" ]; then
+                    cp "$secrets_template" "$secrets_file"
+                    echo "[OK] Created secrets.env from template."
+                else
+                    echo "[ERROR] Missing secrets template: $secrets_template"
+                fi
+            fi
+
+            if [ -z "${WIZARD_EDITOR:-}" ]; then
+                wizard_choose_editor || true
+            fi
+            if [ -n "${WIZARD_EDITOR:-}" ] && [ -f "$secrets_file" ]; then
+                wizard_edit_file "$secrets_file" "$WIZARD_EDITOR"
+            fi
+
+            create_secrets_from_env_file "secrets.env" "$SCRIPT_DIR/secrets.env.template" || true
+            ;;
+        2)
+            create_required_secrets_menu
+            echo ""
+            check_required_secrets || true
+
+            read_prompt "Create optional secrets now (Telegram/Email/Google Drive)? (y/N): " create_optional
+            if [[ "$create_optional" =~ ^[Yy]$ ]]; then
+                create_optional_secrets_menu
+            fi
+            ;;
+        *)
+            echo "[INFO] Skipping secrets creation. You can create secrets later from the main menu."
+            ;;
+    esac
+
     if ! check_required_secrets; then
         echo ""
-        echo "[WARN] Some required secrets are missing"
-        echo "How do you want to create secrets?"
-        echo "1) Create from secrets.env file"
-        echo "2) Create interactively"
-        echo ""
-        read_prompt "Your choice (1-2) [2]: " secrets_choice
-        secrets_choice="${secrets_choice:-2}"
-
-        if [ "$secrets_choice" = "1" ]; then
-            create_secrets_from_env_file "secrets.env" "$SCRIPT_DIR/secrets.env.template" || true
-        else
-            create_required_secrets_menu
-        fi
-
-        echo ""
-        check_required_secrets || true
-    fi
-
-    read_prompt "Create optional secrets now (Telegram/Email/Google Drive)? (y/N): " create_optional
-    if [[ "$create_optional" =~ ^[Yy]$ ]]; then
-        create_optional_secrets_menu
+        echo "[WARN] Some required secrets are still missing. Stack deploy may fail until they exist." >&2
     fi
 
     mark_setup_complete
