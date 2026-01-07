@@ -102,8 +102,8 @@ function Update-StackImages {
     $webName = $config["WEB_IMAGE_NAME"]; $webTag = $config["WEB_IMAGE_VERSION"]
 
     Write-Host "`n[UPDATE] Update Image Version`n" -ForegroundColor Cyan
-    Write-Host "1) API/CHECK image ($imgName:$imgTag)" -ForegroundColor Gray
-    Write-Host "2) WEB image ($webName:$webTag)" -ForegroundColor Gray
+    Write-Host "1) API/CHECK image ($($imgName):$($imgTag))" -ForegroundColor Gray
+    Write-Host "2) WEB image ($($webName):$($webTag))" -ForegroundColor Gray
     Write-Host "3) Back`n" -ForegroundColor Gray
 
     $choice = Read-Host "Your choice (1-3)"
@@ -480,6 +480,12 @@ function Invoke-StackDeploy {
         Write-Host "`n[OK] Stack deployed: $stackName" -ForegroundColor Green
         Write-Host "`nStack services:" -ForegroundColor Cyan
         docker stack services $stackName
+
+        if (Get-Command Test-DeploymentHealth -ErrorAction SilentlyContinue) {
+            Write-Host ""
+            Write-Host "[INFO] Waiting 20s before the first health check (services may still be initializing)..." -ForegroundColor Gray
+            Test-DeploymentHealth -StackName $stackName -ProxyType $proxyTypeInfo -WaitSeconds 20 -LogsSince "30m" -LogsTail 200 | Out-Null
+        }
     } else {
         Write-Host "[ERROR] Failed to deploy stack" -ForegroundColor Red
     }

@@ -512,7 +512,21 @@ deploy_stack() {
     local deploy_rc=$?
     rm -f "$temp_config" 2>/dev/null || true
     
-    [ $deploy_rc -eq 0 ] && { echo ""; echo "✅ Stack deployed: $stack_name"; echo ""; echo "📋 Stack services:"; docker stack services "$stack_name"; } || echo "❌ Failed to deploy stack"
+    if [ $deploy_rc -eq 0 ]; then
+        echo ""
+        echo "✅ Stack deployed: $stack_name"
+        echo ""
+        echo "📋 Stack services:"
+        docker stack services "$stack_name"
+
+        if command -v check_deployment_health >/dev/null 2>&1; then
+            echo ""
+            echo "[INFO] Waiting 20s before the first health check (services may still be initializing)..."
+            check_deployment_health "$stack_name" "${PROXY_TYPE:-traefik}" 20 "30m" "200" || true
+        fi
+    else
+        echo "❌ Failed to deploy stack"
+    fi
 }
 
 # Helper: Wait for stack and its networks to be fully removed

@@ -5,6 +5,10 @@
     environment:
       # Logging.
       - TIMEZONE=${TIMEZONE}
+      # Debug settings.
+      - DEBUG_ENABLED=${DEBUG_ENABLED:-false}
+      # Tools API tolerance period.
+      - TOOLS_USING_API_TOLERANCE_PERIOD_IN_SECONDS=${TOOLS_USING_API_TOLERANCE_PERIOD_IN_SECONDS:-100}
       # Check Frequency.
       - CHECK_WEBSITES_EVERY_X_MINUTES=${CHECK_WEBSITES_EVERY_X_MINUTES}
       - CHECK_GOOGLEDRIVE_EVERY_X_MINUTES=${CHECK_GOOGLEDRIVE_EVERY_X_MINUTES}
@@ -13,8 +17,9 @@
       - DB_USER=state_checker
       - DB_PW_FILE=/run/secrets/STATECHECKER_SERVER_DB_USER_PW
       - DB_NAME=state_checker
-      # Config file with website, folders and tools to check.
-      - STATECHECKER_SERVER_CONFIG=${STATECHECKER_SERVER_CONFIG}
+      # Initial data seeding (only used on first startup if database is empty).
+      - INIT_WEBSITES=${INIT_WEBSITES:-}
+      - INIT_GOOGLE_DRIVE_FOLDERS=${INIT_GOOGLE_DRIVE_FOLDERS:-}
       # Google Drive Backup check.
       - GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_FILE=/run/secrets/STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON
       ## Messaging ##

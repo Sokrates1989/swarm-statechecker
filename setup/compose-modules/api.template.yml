@@ -8,13 +8,18 @@
       - SERVER_AUTHENTICATION_TOKEN=${SERVER_AUTHENTICATION_TOKEN}
       # Logging.
       - TIMEZONE=${TIMEZONE}
+      # Debug settings.
+      - DEBUG_ENABLED=${DEBUG_ENABLED:-false}
+      # Tools API tolerance period.
+      - TOOLS_USING_API_TOLERANCE_PERIOD_IN_SECONDS=${TOOLS_USING_API_TOLERANCE_PERIOD_IN_SECONDS:-100}
       # Database connection.
       - DB_HOST=${STACK_NAME}_db
       - DB_USER=state_checker
       - DB_PW_FILE=/run/secrets/STATECHECKER_SERVER_DB_USER_PW
       - DB_NAME=state_checker
-      # Config file with website, folders and tools to check.
-      - STATECHECKER_SERVER_CONFIG=${STATECHECKER_SERVER_CONFIG}
+      # Initial data seeding (only used on first startup if database is empty).
+      - INIT_WEBSITES=${INIT_WEBSITES:-}
+      - INIT_GOOGLE_DRIVE_FOLDERS=${INIT_GOOGLE_DRIVE_FOLDERS:-}
     secrets:
       - STATECHECKER_SERVER_AUTHENTICATION_TOKEN
       - STATECHECKER_SERVER_DB_USER_PW
