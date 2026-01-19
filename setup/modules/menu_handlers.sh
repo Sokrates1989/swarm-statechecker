@@ -15,6 +15,119 @@ read_prompt() {
     fi
 }
 
+# Source formatting helpers
+MENU_HANDLERS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "${MENU_HANDLERS_DIR}/menu_formatting.sh" ]; then
+    # shellcheck source=/dev/null
+    source "${MENU_HANDLERS_DIR}/menu_formatting.sh"
+fi
+
+# _env_value_or_default
+# Reads a dotenv key with a fallback default value.
+#
+# Arguments:
+# - $1: env file path
+# - $2: key name
+# - $3: default value
+# Output:
+# - prints the resolved value
+_env_value_or_default() {
+    local env_file="$1"
+    local key="$2"
+    local default_value="$3"
+
+    if [ ! -f "$env_file" ]; then
+        echo "$default_value"
+        return 0
+    fi
+
+    local line
+    line=$(grep "^${key}=" "$env_file" 2>/dev/null | head -n 1 || true)
+    if [ -z "$line" ]; then
+        echo "$default_value"
+        return 0
+    fi
+
+    echo "${line#*=}" | tr -d '"' | tr -d '\r'
+}
+
+# _stack_running
+# Checks if a Docker stack is running.
+#
+# Arguments:
+# - $1: stack name
+_stack_running() {
+    local stack_name="$1"
+    docker stack ls --format '{{.Name}}' 2>/dev/null | grep -qx "${stack_name}"
+}
+
+# show_deployment_overview
+# Displays a boxed deployment overview for the current stack.
+#
+# Arguments:
+# - $1: env file path
+show_deployment_overview() {
+    local env_file="${1:-.env}"
+    local stack_name
+    stack_name="$(_env_value_or_default "$env_file" "STACK_NAME" "statechecker")"
+    local proxy_type
+    proxy_type="$(_env_value_or_default "$env_file" "PROXY_TYPE" "traefik")"
+    local api_domain
+    api_domain="$(_env_value_or_default "$env_file" "API_DOMAIN" "")"
+    if [ -z "$api_domain" ]; then
+        api_domain="$(_env_value_or_default "$env_file" "API_URL" "")"
+    fi
+    local web_domain
+    web_domain="$(_env_value_or_default "$env_file" "WEB_DOMAIN" "")"
+    if [ -z "$web_domain" ]; then
+        web_domain="$(_env_value_or_default "$env_file" "WEB_URL" "")"
+    fi
+    local pma_domain
+    pma_domain="$(_env_value_or_default "$env_file" "PHPMYADMIN_DOMAIN" "")"
+    if [ -z "$pma_domain" ]; then
+        pma_domain="$(_env_value_or_default "$env_file" "PHPMYADMIN_URL" "")"
+    fi
+    local db_type
+    db_type="$(_env_value_or_default "$env_file" "DB_TYPE" "postgresql")"
+    local image_name
+    image_name="$(_env_value_or_default "$env_file" "IMAGE_NAME" "sokrates1989/statechecker")"
+    local image_version
+    image_version="$(_env_value_or_default "$env_file" "IMAGE_VERSION" "latest")"
+    local web_image_name
+    web_image_name="$(_env_value_or_default "$env_file" "WEB_IMAGE_NAME" "sokrates1989/statechecker-web")"
+    local web_image_version
+    web_image_version="$(_env_value_or_default "$env_file" "WEB_IMAGE_VERSION" "latest")"
+
+    local stack_state="not running"
+    if _stack_running "$stack_name"; then
+        stack_state="running"
+    fi
+
+    local ok_icon="✅"
+    local off_icon="⏹️"
+    local stack_status="${off_icon} not running"
+    local image_icon="${off_icon}"
+    if [ "$stack_state" = "running" ]; then
+        stack_status="${ok_icon} running"
+        image_icon="${ok_icon}"
+    fi
+
+    _box_rule
+    _box_line "Deployment Overview"
+    _box_rule
+    _box_line "Stack    : ${stack_name} (${stack_status})"
+    _box_line "Proxy    : ${proxy_type}"
+    [ -n "$api_domain" ] && _box_line "API URL : ${api_domain}"
+    [ -n "$web_domain" ] && _box_line "Web URL : ${web_domain}"
+    [ -n "$pma_domain" ] && _box_line "PMA URL : ${pma_domain}"
+    _box_line "DB Type  : ${db_type}"
+    _box_line "Images   :"
+    _box_line_list "${image_icon} API/CHECK ${image_name}:${image_version}"
+    _box_line_list "${image_icon} Web ${web_image_name}:${web_image_version}"
+    _box_rule
+    echo ""
+}
+
 _sanitize_env_file_statechecker_config() {
     # _sanitize_env_file_statechecker_config
     # Removes leftover multiline JSON blocks from older templates for STATECHECKER_SERVER_CONFIG.
@@ -846,6 +959,9 @@ _print_main_menu_text() {
     echo ""
     echo "================ Main Menu ================"
     echo ""
+    if declare -F _box_rule >/dev/null; then
+        show_deployment_overview ".env"
+    fi
     echo "Deployment:"
     echo "  1) Deploy stack"
     echo "  2) Remove stack"
