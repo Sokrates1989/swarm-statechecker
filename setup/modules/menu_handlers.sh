@@ -22,6 +22,16 @@ if [ -f "${MENU_HANDLERS_DIR}/menu_formatting.sh" ]; then
     source "${MENU_HANDLERS_DIR}/menu_formatting.sh"
 fi
 
+if [ -f "${MENU_HANDLERS_DIR}/config-builder.sh" ]; then
+    # shellcheck source=/dev/null
+    source "${MENU_HANDLERS_DIR}/config-builder.sh"
+fi
+
+if [ -f "${MENU_HANDLERS_DIR}/backup_integration.sh" ]; then
+    # shellcheck source=/dev/null
+    source "${MENU_HANDLERS_DIR}/backup_integration.sh"
+fi
+
 # _env_value_or_default
 # Reads a dotenv key with a fallback default value.
 #
@@ -61,6 +71,21 @@ _stack_running() {
     docker stack ls --format '{{.Name}}' 2>/dev/null | grep -qx "${stack_name}"
 }
 
+# _is_truthy
+# Returns 0 when the provided value should be treated as true.
+#
+# Arguments:
+# - $1: value to check
+_is_truthy() {
+    local value
+    value=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+
+    case "$value" in
+        true|1|yes|y) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # show_deployment_overview
 # Displays a boxed deployment overview for the current stack.
 #
@@ -88,7 +113,7 @@ show_deployment_overview() {
         pma_domain="$(_env_value_or_default "$env_file" "PHPMYADMIN_URL" "")"
     fi
     local db_type
-    db_type="$(_env_value_or_default "$env_file" "DB_TYPE" "postgresql")"
+    db_type="$(_env_value_or_default "$env_file" "DB_TYPE" "mysql")"
     local image_name
     image_name="$(_env_value_or_default "$env_file" "IMAGE_NAME" "sokrates1989/statechecker")"
     local image_version
@@ -956,6 +981,14 @@ _print_main_menu_text() {
     # _print_main_menu_text
     # Prints the main menu options.
     local menu_exit="$1"
+    local backup_label="Enable backup integration (backup-net)"
+    if [ -f .env ]; then
+        local backup_value
+        backup_value="$(_env_value_or_default ".env" "ENABLE_BACKUP_NETWORK" "false")"
+        if _is_truthy "$backup_value"; then
+            backup_label="Show backup-restore connection details"
+        fi
+    fi
     echo ""
     echo "================ Main Menu ================"
     echo ""
@@ -987,6 +1020,9 @@ _print_main_menu_text() {
     echo ""
     echo "CI/CD:"
     echo "  15) GitHub Actions CI/CD helper"
+    echo ""
+    echo "Backup:"
+    echo "  16) ${backup_label}"
     echo ""
     echo "  ${menu_exit}) Exit"
     echo ""
@@ -1035,6 +1071,15 @@ _handle_main_menu_choice() {
         13) create_optional_secrets_menu ;;
         14) list_secrets ;;
         15) run_ci_cd_github_helper ;;
+        16)
+            local backup_value
+            backup_value="$(_env_value_or_default ".env" "ENABLE_BACKUP_NETWORK" "false")"
+            if _is_truthy "$backup_value"; then
+                show_backup_restore_connection_info
+            else
+                handle_setup_backup_integration
+            fi
+            ;;
         ${menu_exit}) echo "👋 Goodbye!"; exit 0 ;;
         *) echo "❌ Invalid selection" ;;
     esac
@@ -1044,7 +1089,7 @@ show_main_menu() {
      # show_main_menu
      # Main interactive menu loop.
      local choice
-     local MENU_EXIT=16
+     local MENU_EXIT=17
      
      while true; do
         _print_main_menu_text "$MENU_EXIT"

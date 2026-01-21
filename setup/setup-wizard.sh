@@ -16,6 +16,7 @@ source "$SCRIPT_DIR/modules/health-check.sh"
 source "$SCRIPT_DIR/modules/data-dirs.sh"
 source "$SCRIPT_DIR/modules/wizard.sh"
 source "$SCRIPT_DIR/modules/config-builder.sh"
+source "$SCRIPT_DIR/modules/backup_integration.sh"
 
 is_setup_complete() {
     # is_setup_complete
@@ -602,6 +603,38 @@ main() {
     include_pma="true"
     [ "${pma_replicas:-0}" = "0" ] && include_pma="false"
 
+    local enable_backup_network
+    enable_backup_network=$(grep '^ENABLE_BACKUP_NETWORK=' "$PROJECT_ROOT/.env" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+
+    if [ -n "$enable_backup_network" ]; then
+        if _is_truthy "$enable_backup_network"; then
+            enable_backup_network="true"
+        else
+            enable_backup_network="false"
+        fi
+    else
+        enable_backup_network="false"
+        if _prompt_yes_no "Enable central backup integration (attach DB to backup-net)?" "N"; then
+            if prompt_backup_network >/dev/null; then
+                enable_backup_network="true"
+            else
+                echo "[WARN] Cannot enable backup integration because 'backup-net' is missing." >&2
+                echo "       Deploy swarm-backup-restore first so it can create the network." >&2
+                enable_backup_network="false"
+            fi
+        fi
+    fi
+
+    if [ "$enable_backup_network" = "true" ]; then
+        if ! docker network inspect "backup-net" >/dev/null 2>&1; then
+            echo "[WARN] Backup network 'backup-net' not found" >&2
+            echo "       Deploy swarm-backup-restore first so it can create the network." >&2
+            enable_backup_network="false"
+        fi
+    fi
+
+    update_env_values "$PROJECT_ROOT/.env" "ENABLE_BACKUP_NETWORK" "$enable_backup_network"
+
     echo "" >&2
     echo "[BUILD] Generating swarm-stack.yml from templates..." >&2
     backup_existing_files "$PROJECT_ROOT"
@@ -614,6 +647,8 @@ main() {
         traefik_net="${traefik_net:-traefik}"
         update_stack_network "$PROJECT_ROOT/swarm-stack.yml" "$traefik_net"
     fi
+
+    update_stack_backup_network "$PROJECT_ROOT/swarm-stack.yml" "${enable_backup_network:-false}"
 
     echo "" >&2
     echo "==========================" >&2

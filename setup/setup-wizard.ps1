@@ -12,6 +12,8 @@ Set-Location $ProjectRoot
 Import-Module "$ScriptDir\modules\docker_helpers.ps1" -Force
 Import-Module "$ScriptDir\modules\menu_handlers.ps1" -Force
 Import-Module "$ScriptDir\modules\data-dirs.ps1" -Force
+Import-Module "$ScriptDir\modules\config-builder.ps1" -Force
+Import-Module "$ScriptDir\modules\backup_integration.ps1" -Force
 
 function Test-SetupComplete {
     <#
@@ -201,6 +203,43 @@ if (-not (New-EnvFileIfMissing)) {
 }
 
 Set-EnvValuesInteractive -EnvFile "$ProjectRoot\.env"
+
+$envFile = "$ProjectRoot\.env"
+$enableBackupRaw = $null
+if (Get-Command Get-EnvValueFromFile -ErrorAction SilentlyContinue) {
+    $enableBackupRaw = Get-EnvValueFromFile -EnvFile $envFile -Key "ENABLE_BACKUP_NETWORK" -DefaultValue ""
+}
+
+if ([string]::IsNullOrWhiteSpace($enableBackupRaw)) {
+    $enableBackup = "false"
+    $choice = Read-Host "Enable central backup integration (attach DB to backup-net)? (y/N)"
+    if ($choice -match '^[Yy]$') {
+        if (Get-Command Test-BackupNetworkExists -ErrorAction SilentlyContinue -and (Test-BackupNetworkExists)) {
+            $enableBackup = "true"
+        } else {
+            Write-Host "[WARN] Backup network 'backup-net' not found. Deploy swarm-backup-restore first." -ForegroundColor Yellow
+            $enableBackup = "false"
+        }
+    }
+} else {
+    $enableBackup = if ((Get-Command ConvertTo-TruthyValue -ErrorAction SilentlyContinue) -and (ConvertTo-TruthyValue $enableBackupRaw)) { "true" } else { "false" }
+}
+
+if ($enableBackup -eq "true") {
+    if (Get-Command Test-BackupNetworkExists -ErrorAction SilentlyContinue -and -not (Test-BackupNetworkExists)) {
+        Write-Host "[WARN] Backup network 'backup-net' not found. Deploy swarm-backup-restore first." -ForegroundColor Yellow
+        $enableBackup = "false"
+    }
+}
+
+Update-EnvValue -EnvFile $envFile -Key "ENABLE_BACKUP_NETWORK" -Value $enableBackup | Out-Null
+
+$stackFile = "$ProjectRoot\swarm-stack.yml"
+if (Test-Path $stackFile) {
+    if (Get-Command Update-StackBackupNetwork -ErrorAction SilentlyContinue) {
+        $null = Update-StackBackupNetwork -StackFile $stackFile -EnableBackupNetwork $enableBackup
+    }
+}
 
 $envConfig = Get-EnvConfig
 $dataRoot = $envConfig["DATA_ROOT"]

@@ -212,6 +212,76 @@ update_stack_network() {
 }
 
 # ------------------------------------------------------------------------------
+# Update backup network integration in stack file
+#
+# Arguments:
+#   $1 = stack_file            → Path to swarm-stack.yml
+#   $2 = enable_backup_network → "true" or "false" (default: false)
+#
+# Returns:
+#   0 on success, 1 otherwise
+# ------------------------------------------------------------------------------
+update_stack_backup_network() {
+    local stack_file="$1"
+    local enable_backup_network="${2:-false}"
+
+    if [ ! -f "$stack_file" ]; then
+        echo "[ERROR] Stack file not found: $stack_file"
+        return 1
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp)
+
+    awk -v enable="$enable_backup_network" '
+        BEGIN {
+            in_db=0;
+            in_networks=0;
+            skipping_backup_def=0;
+            added_backup_def=0;
+            added_db=0;
+        }
+
+        /^  db:$/ { in_db=1 }
+        in_db && /^  [A-Za-z0-9_]+:$/ && $0 !~ /^  db:$/ { in_db=0 }
+
+        /^networks:$/ { in_networks=1 }
+        in_networks && /^secrets:$/ { in_networks=0 }
+
+        # Drop existing backup network definition (we may re-add if enabled)
+        in_networks && /^  backup:$/ { skipping_backup_def=1; next }
+        skipping_backup_def {
+            if ($0 ~ /^  [A-Za-z0-9_]+:$/ || $0 ~ /^secrets:$/) {
+                skipping_backup_def=0
+            } else {
+                next
+            }
+        }
+
+        # Drop existing DB attachment line
+        in_db && /^      - backup$/ { next }
+
+        { print }
+
+        # Add external backup network definition
+        in_networks && enable=="true" && /^    driver: overlay$/ && !added_backup_def {
+            print "  backup:";
+            print "    external: true";
+            print "    name: backup-net";
+            added_backup_def=1
+        }
+
+        # Attach DB service to backup network (only if local DB service exists)
+        in_db && enable=="true" && /^      - backend$/ && !added_db {
+            print "      - backup";
+            added_db=1
+        }
+    ' "$stack_file" > "$tmp_file" && mv "$tmp_file" "$stack_file"
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # Helper: Inject snippet file contents after a placeholder line
 #
 # Arguments:

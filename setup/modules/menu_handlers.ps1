@@ -337,6 +337,32 @@ function Set-ProcessEnvFromConfig {
 }
 
 Import-Module "$setupDir\modules\data-dirs.ps1" -Force
+Import-Module "$setupDir\modules\config-builder.ps1" -Force
+Import-Module "$setupDir\modules\backup_integration.ps1" -Force
+
+function Get-BackupIntegrationState {
+    <#
+    .SYNOPSIS
+    Determines whether backup integration is enabled in .env.
+
+    .OUTPUTS
+    System.Boolean
+    #>
+    $envFile = Join-Path (Get-Location).Path ".env"
+    if (-not (Test-Path $envFile)) { return $false }
+
+    if (Get-Command Get-EnvValueFromFile -ErrorAction SilentlyContinue) {
+        $raw = Get-EnvValueFromFile -EnvFile $envFile -Key "ENABLE_BACKUP_NETWORK" -DefaultValue "false"
+    } else {
+        $raw = "false"
+    }
+
+    if (Get-Command ConvertTo-TruthyValue -ErrorAction SilentlyContinue) {
+        return (ConvertTo-TruthyValue $raw)
+    }
+
+    return $false
+}
 
 function Invoke-EnsureDataDirsBeforeDeploy {
     <#
@@ -719,6 +745,15 @@ function Show-MainMenuText {
     Write-Host "CI/CD:" -ForegroundColor Yellow
     Write-Host "  15) GitHub Actions CI/CD helper" -ForegroundColor Gray
     Write-Host "" 
+
+    $backupLabel = "Enable backup integration (backup-net)"
+    if (Get-BackupIntegrationState) {
+        $backupLabel = "Show backup-restore connection details"
+    }
+    Write-Host "Backup:" -ForegroundColor Yellow
+    Write-Host "  16) $backupLabel" -ForegroundColor Gray
+    Write-Host "" 
+
     Write-Host "  $MENU_EXIT) Exit" -ForegroundColor Gray
     Write-Host "" 
 }
@@ -764,6 +799,17 @@ function Handle-MenuChoice {
         }
         "14" { Invoke-PhpMyAdminToggle }
         "15" { Invoke-GitHubCICDHelper }
+        "16" {
+            if (Get-BackupIntegrationState) {
+                if (Get-Command Show-BackupRestoreConnectionInfo -ErrorAction SilentlyContinue) {
+                    $null = Show-BackupRestoreConnectionInfo
+                }
+            } else {
+                if (Get-Command Invoke-SetupBackupIntegration -ErrorAction SilentlyContinue) {
+                    $null = Invoke-SetupBackupIntegration
+                }
+            }
+        }
         "$MENU_EXIT" { Write-Host "Goodbye!" -ForegroundColor Cyan; exit 0 }
         Default { Write-Host "[ERROR] Invalid selection" -ForegroundColor Yellow }
     }
@@ -775,7 +821,7 @@ function Show-MainMenu {
     Main interactive menu loop.
     #>
     while ($true) {
-        $MENU_EXIT = 16
+        $MENU_EXIT = 17
         Show-MainMenuText -MENU_EXIT $MENU_EXIT
         $choice = Read-Host "Your choice (1-$MENU_EXIT)"
         Handle-MenuChoice -Choice $choice -MENU_EXIT $MENU_EXIT -setupDir $setupDir
