@@ -1024,6 +1024,10 @@ _print_main_menu_text() {
     echo "Backup:"
     echo "  16) ${backup_label}"
     echo ""
+    echo "Keycloak:"
+    echo "  17) Bootstrap Keycloak realm"
+    echo "  18) Create Keycloak user"
+    echo ""
     echo "  ${menu_exit}) Exit"
     echo ""
 }
@@ -1080,6 +1084,22 @@ _handle_main_menu_choice() {
                 handle_setup_backup_integration
             fi
             ;;
+        17)
+            if [ -f "${MENU_HANDLERS_DIR}/menu_keycloak.sh" ]; then
+                source "${MENU_HANDLERS_DIR}/menu_keycloak.sh"
+                handle_keycloak_bootstrap
+            else
+                echo "❌ menu_keycloak.sh not found"
+            fi
+            ;;
+        18)
+            if [ -f "${MENU_HANDLERS_DIR}/menu_keycloak.sh" ]; then
+                source "${MENU_HANDLERS_DIR}/menu_keycloak.sh"
+                handle_keycloak_create_user
+            else
+                echo "❌ menu_keycloak.sh not found"
+            fi
+            ;;
         ${menu_exit}) echo "👋 Goodbye!"; exit 0 ;;
         *) echo "❌ Invalid selection" ;;
     esac
@@ -1089,7 +1109,7 @@ show_main_menu() {
      # show_main_menu
      # Main interactive menu loop.
      local choice
-     local MENU_EXIT=17
+     local MENU_EXIT=19
      
      while true; do
         _print_main_menu_text "$MENU_EXIT"

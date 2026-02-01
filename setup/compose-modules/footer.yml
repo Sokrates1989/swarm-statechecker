@@ -17,4 +17,6 @@ secrets:
     external: true
   "STATECHECKER_SERVER_EMAIL_SENDER_PASSWORD":
     external: true
+  "STATECHECKER_SERVER_KEYCLOAK_CLIENT_SECRET":
+    external: true
 

@@ -20,9 +20,17 @@
       # Initial data seeding (only used on first startup if database is empty).
       - INIT_WEBSITES=${INIT_WEBSITES:-}
       - INIT_GOOGLE_DRIVE_FOLDERS=${INIT_GOOGLE_DRIVE_FOLDERS:-}
+      # Keycloak authentication (required for Web UI).
+      - KEYCLOAK_ENABLED=true
+      - KEYCLOAK_URL=${KEYCLOAK_URL:-}
+      - KEYCLOAK_INTERNAL_URL=${KEYCLOAK_INTERNAL_URL:-}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-}
+      - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID:-}
+      - KEYCLOAK_CLIENT_SECRET_FILE=/run/secrets/STATECHECKER_SERVER_KEYCLOAK_CLIENT_SECRET
     secrets:
       - STATECHECKER_SERVER_AUTHENTICATION_TOKEN
       - STATECHECKER_SERVER_DB_USER_PW
+      - STATECHECKER_SERVER_KEYCLOAK_CLIENT_SECRET
     networks:
       - backend
 ###PROXY_NETWORK###

@@ -4,6 +4,11 @@
     image: ${WEB_IMAGE_NAME}:${WEB_IMAGE_VERSION}
     environment:
       - API_UPSTREAM=${STACK_NAME}_api:${API_PORT}
+      # Keycloak authentication (required for Web UI).
+      - KEYCLOAK_ENABLED=true
+      - KEYCLOAK_URL=${KEYCLOAK_URL:-}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-}
+      - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID_WEB:-statechecker-frontend}
     healthcheck:
       test: ["CMD-SHELL", "(test -s /var/run/nginx.pid && kill -0 $$(cat /var/run/nginx.pid)) || (test -s /run/nginx.pid && kill -0 $$(cat /run/nginx.pid))"]
       interval: 30s
