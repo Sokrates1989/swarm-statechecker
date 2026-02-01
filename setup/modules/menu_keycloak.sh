@@ -65,6 +65,26 @@ EOF
     echo "   - KEYCLOAK_CLIENT_ID_WEB: $frontend_client"
 }
 
+# _read_env_value_with_default
+# Reads an env value from a file, falling back to a default if missing or empty.
+# Args: $1=file_path, $2=key, $3=default_value
+_read_env_value_with_default() {
+    local file_path="$1"
+    local key="$2"
+    local default_value="$3"
+    local value=""
+
+    if [ -f "$file_path" ]; then
+        value=$(grep -m1 "^${key}=" "$file_path" 2>/dev/null | cut -d'=' -f2- | tr -d ' "' | tr -d $'\r')
+    fi
+
+    if [ -z "$value" ]; then
+        echo "$default_value"
+    else
+        echo "$value"
+    fi
+}
+
 # _show_available_roles
 # Displays available roles with descriptions.
 _show_available_roles() {
@@ -246,27 +266,19 @@ handle_keycloak_bootstrap() {
     local backend_url="http://localhost:8787"
     
     # Load from template if exists
-    echo "🔍 Debug: Looking for template at: $env_template"
     if [ -f "$env_template" ]; then
-        echo "✅ Debug: Template found, loading defaults..."
-        keycloak_url=$(grep "^KEYCLOAK_URL=" "$env_template" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_url="http://localhost:9090"
-        keycloak_realm=$(grep "^KEYCLOAK_REALM=" "$env_template" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_realm="statechecker"
-        frontend_url=$(grep "^WEB_URL=" "$env_template" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || frontend_url="http://localhost:8788"
-        backend_url=$(grep "^API_URL=" "$env_template" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || backend_url="http://localhost:8787"
-        echo "🔍 Debug: Loaded realm='$keycloak_realm'"
-    else
-        echo "❌ Debug: Template not found, using hardcoded defaults"
-        echo "🔍 Debug: Project root: $project_root"
-        echo "🔍 Debug: Files in setup dir:"
-        ls -la "$project_root/setup/" 2>/dev/null || echo "Setup dir not found"
+        keycloak_url=$(_read_env_value_with_default "$env_template" "KEYCLOAK_URL" "$keycloak_url")
+        keycloak_realm=$(_read_env_value_with_default "$env_template" "KEYCLOAK_REALM" "$keycloak_realm")
+        frontend_url=$(_read_env_value_with_default "$env_template" "WEB_URL" "$frontend_url")
+        backend_url=$(_read_env_value_with_default "$env_template" "API_URL" "$backend_url")
     fi
     
     # Override with actual .env if it exists
     if [ -f "$project_root/.env" ]; then
-        keycloak_url=$(grep "^KEYCLOAK_URL=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_url="$keycloak_url"
-        keycloak_realm=$(grep "^KEYCLOAK_REALM=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_realm="$keycloak_realm"
-        frontend_url=$(grep "^WEB_URL=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || frontend_url="$frontend_url"
-        backend_url=$(grep "^API_URL=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || backend_url="$backend_url"
+        keycloak_url=$(_read_env_value_with_default "$project_root/.env" "KEYCLOAK_URL" "$keycloak_url")
+        keycloak_realm=$(_read_env_value_with_default "$project_root/.env" "KEYCLOAK_REALM" "$keycloak_realm")
+        frontend_url=$(_read_env_value_with_default "$project_root/.env" "WEB_URL" "$frontend_url")
+        backend_url=$(_read_env_value_with_default "$project_root/.env" "API_URL" "$backend_url")
     fi
     
     # Ensure URLs have protocol for display in prompts
