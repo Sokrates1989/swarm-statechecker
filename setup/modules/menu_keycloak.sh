@@ -246,11 +246,19 @@ handle_keycloak_bootstrap() {
     local backend_url="http://localhost:8787"
     
     # Load from template if exists
+    echo "🔍 Debug: Looking for template at: $env_template"
     if [ -f "$env_template" ]; then
+        echo "✅ Debug: Template found, loading defaults..."
         keycloak_url=$(grep "^KEYCLOAK_URL=" "$env_template" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_url="http://localhost:9090"
         keycloak_realm=$(grep "^KEYCLOAK_REALM=" "$env_template" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_realm="statechecker"
         frontend_url=$(grep "^WEB_URL=" "$env_template" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || frontend_url="http://localhost:8788"
         backend_url=$(grep "^API_URL=" "$env_template" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || backend_url="http://localhost:8787"
+        echo "🔍 Debug: Loaded realm='$keycloak_realm'"
+    else
+        echo "❌ Debug: Template not found, using hardcoded defaults"
+        echo "🔍 Debug: Project root: $project_root"
+        echo "🔍 Debug: Files in setup dir:"
+        ls -la "$project_root/setup/" 2>/dev/null || echo "Setup dir not found"
     fi
     
     # Override with actual .env if it exists
