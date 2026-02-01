@@ -17,6 +17,54 @@ STATECHECKER_ROLES=(
     "statechecker:read"
 )
 
+# _update_env_with_keycloak_config
+# Updates the .env file with Keycloak configuration values.
+# Args: $1=project_root, $2=keycloak_url, $3=realm, $4=frontend_client, $5=backend_client
+_update_env_with_keycloak_config() {
+    local project_root="$1"
+    local keycloak_url="$2"
+    local realm="$3"
+    local frontend_client="$4"
+    local backend_client="$5"
+    local env_file="$project_root/.env"
+    
+    if [ ! -f "$env_file" ]; then
+        echo "⚠️  .env file not found, skipping Keycloak configuration update"
+        return 0
+    fi
+    
+    echo "📝 Updating .env file with Keycloak configuration..."
+    
+    # Create backup
+    cp "$env_file" "$env_file.backup.$(date +%Y%m%d_%H%M%S)"
+    
+    # Remove existing Keycloak settings if they exist
+    sed -i '/^KEYCLOAK_URL=/d' "$env_file"
+    sed -i '/^KEYCLOAK_INTERNAL_URL=/d' "$env_file"
+    sed -i '/^KEYCLOAK_REALM=/d' "$env_file"
+    sed -i '/^KEYCLOAK_CLIENT_ID=/d' "$env_file"
+    sed -i '/^KEYCLOAK_CLIENT_ID_WEB=/d' "$env_file"
+    sed -i '/^KEYCLOAK_ENABLED=/d' "$env_file"
+    
+    # Add new Keycloak settings at the end
+    cat >> "$env_file" << EOF
+
+# --- Keycloak Authentication (Required for Web UI) ---
+KEYCLOAK_URL="$keycloak_url"
+KEYCLOAK_INTERNAL_URL=""
+KEYCLOAK_REALM="$realm"
+KEYCLOAK_CLIENT_ID="$backend_client"
+KEYCLOAK_CLIENT_ID_WEB="$frontend_client"
+KEYCLOAK_ENABLED="true"
+EOF
+    
+    echo "✅ .env file updated with Keycloak configuration"
+    echo "   - KEYCLOAK_URL: $keycloak_url"
+    echo "   - KEYCLOAK_REALM: $realm"
+    echo "   - KEYCLOAK_CLIENT_ID: $backend_client"
+    echo "   - KEYCLOAK_CLIENT_ID_WEB: $frontend_client"
+}
+
 # _show_available_roles
 # Displays available roles with descriptions.
 _show_available_roles() {
@@ -190,17 +238,27 @@ handle_keycloak_bootstrap() {
     echo "🔐 Keycloak Bootstrap for Statechecker"
     echo ""
     
-    # Load .env defaults
-    local keycloak_url="${KEYCLOAK_URL:-http://localhost:9090}"
-    local keycloak_realm="${KEYCLOAK_REALM:-statechecker}"
-    local frontend_url="${WEB_URL:-http://localhost:8788}"
-    local backend_url="${API_URL:-http://localhost:8787}"
+    # Load defaults from template first, then override with .env if it exists
+    local env_template="$SCRIPT_DIR/.env.template"
+    local keycloak_url="http://localhost:9090"
+    local keycloak_realm="statechecker"
+    local frontend_url="http://localhost:8788"
+    local backend_url="http://localhost:8787"
     
+    # Load from template if exists
+    if [ -f "$env_template" ]; then
+        keycloak_url=$(grep "^KEYCLOAK_URL=" "$env_template" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_url="http://localhost:9090"
+        keycloak_realm=$(grep "^KEYCLOAK_REALM=" "$env_template" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_realm="statechecker"
+        frontend_url=$(grep "^WEB_URL=" "$env_template" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || frontend_url="http://localhost:8788"
+        backend_url=$(grep "^API_URL=" "$env_template" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || backend_url="http://localhost:8787"
+    fi
+    
+    # Override with actual .env if it exists
     if [ -f "$project_root/.env" ]; then
-        keycloak_url=$(grep "^KEYCLOAK_URL=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_url="http://localhost:9090"
-        keycloak_realm=$(grep "^KEYCLOAK_REALM=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_realm="statechecker"
-        frontend_url=$(grep "^WEB_URL=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || frontend_url="http://localhost:8788"
-        backend_url=$(grep "^API_URL=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || backend_url="http://localhost:8787"
+        keycloak_url=$(grep "^KEYCLOAK_URL=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_url="$keycloak_url"
+        keycloak_realm=$(grep "^KEYCLOAK_REALM=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_realm="$keycloak_realm"
+        frontend_url=$(grep "^WEB_URL=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || frontend_url="$frontend_url"
+        backend_url=$(grep "^API_URL=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || backend_url="$backend_url"
     fi
     
     # Ensure URLs have protocol for display in prompts
@@ -421,11 +479,43 @@ handle_keycloak_bootstrap() {
         echo "  Backend client: $backend_client"
         echo "  Roles: statechecker:admin, statechecker:read"
         echo ""
-        echo "📝 Next steps:"
-        echo "   1. Copy the backend_client_secret from the output above"
-        echo "   2. Create the Keycloak client secret in Docker Swarm:"
-        echo "      echo 'YOUR_SECRET' | docker secret create STATECHECKER_SERVER_KEYCLOAK_CLIENT_SECRET -"
-        echo "   3. Deploy the stack"
+        
+        # Update .env file with Keycloak configuration
+        _update_env_with_keycloak_config "$project_root" "$keycloak_url" "$realm" "$frontend_client" "$backend_client"
+        
+        echo ""
+        echo "🔑 IMPORTANT: Copy the backend_client_secret from the JSON output above!"
+        echo "   Look for: \"backend_client_secret\": \"<SECRET_VALUE>\""
+        echo ""
+        
+        echo "📝 Complete Setup Instructions:"
+        echo ""
+        echo "   1️⃣  Create the Keycloak client secret in Docker Swarm:"
+        echo "      echo '<PASTE_SECRET_HERE>' | docker secret create STATECHECKER_SERVER_KEYCLOAK_CLIENT_SECRET -"
+        echo ""
+        echo "   2️⃣  Verify all required secrets exist:"
+        echo "      docker secret ls | grep STATECHECKER_SERVER"
+        echo ""
+        echo "   3️⃣  If you need to create other required secrets:"
+        echo "      - Run menu option 11: 'Create required secrets'"
+        echo "      - Or run: ./quick-start.sh → option 11"
+        echo ""
+        echo "   4️⃣  Deploy the stack:"
+        echo "      - Run menu option 1: 'Deploy stack'"
+        echo "      - Or run: docker stack deploy -c swarm-stack.yml statechecker"
+        echo ""
+        echo "   5️⃣  Access the Statechecker UI:"
+        echo "      - URL: https://statechecker.fe-wi.com (or your WEB_URL)"
+        echo "      - Login with the user(s) you created during bootstrap"
+        echo ""
+        echo "📋 Your .env file has been updated with:"
+        echo "   - KEYCLOAK_URL: $keycloak_url"
+        echo "   - KEYCLOAK_REALM: $realm"
+        echo "   - KEYCLOAK_CLIENT_ID: $backend_client"
+        echo "   - KEYCLOAK_CLIENT_ID_WEB: $frontend_client"
+        echo ""
+        echo "⚠️  Remember: The client secret is ONLY shown once in the bootstrap output!"
+        echo "   If you lose it, you'll need to regenerate it in Keycloak or re-run bootstrap."
         rm -f "$bootstrap_log"
     else
         echo "❌ Bootstrap failed"
@@ -443,13 +533,21 @@ handle_keycloak_create_user() {
     echo "👤 Create Keycloak User"
     echo ""
     
-    # Load .env defaults
-    local keycloak_url="${KEYCLOAK_URL:-http://localhost:9090}"
-    local keycloak_realm="${KEYCLOAK_REALM:-statechecker}"
+    # Load defaults from template first, then override with .env if it exists
+    local env_template="$SCRIPT_DIR/.env.template"
+    local keycloak_url="http://localhost:9090"
+    local keycloak_realm="statechecker"
     
+    # Load from template if exists
+    if [ -f "$env_template" ]; then
+        keycloak_url=$(grep "^KEYCLOAK_URL=" "$env_template" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_url="http://localhost:9090"
+        keycloak_realm=$(grep "^KEYCLOAK_REALM=" "$env_template" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_realm="statechecker"
+    fi
+    
+    # Override with actual .env if it exists
     if [ -f "$project_root/.env" ]; then
-        keycloak_url=$(grep "^KEYCLOAK_URL=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_url="http://localhost:9090"
-        keycloak_realm=$(grep "^KEYCLOAK_REALM=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_realm="statechecker"
+        keycloak_url=$(grep "^KEYCLOAK_URL=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_url="$keycloak_url"
+        keycloak_realm=$(grep "^KEYCLOAK_REALM=" "$project_root/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d ' "') || keycloak_realm="$keycloak_realm"
     fi
     
     # Check if Keycloak is reachable
