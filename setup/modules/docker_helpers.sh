@@ -520,6 +520,7 @@ check_required_secrets() {
         "STATECHECKER_SERVER_AUTHENTICATION_TOKEN"
         "STATECHECKER_SERVER_DB_ROOT_USER_PW"
         "STATECHECKER_SERVER_DB_USER_PW"
+        "STATECHECKER_SERVER_KEYCLOAK_CLIENT_SECRET"
     )
     
     echo "🔐 Checking required secrets..."

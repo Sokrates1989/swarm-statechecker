@@ -861,6 +861,13 @@ create_required_secrets_menu() {
     if [[ "$create_user" =~ ^[Yy]$ ]]; then
         create_secret_interactive "STATECHECKER_SERVER_DB_USER_PW" "MySQL user password" || true
     fi
+
+    local prompt_keycloak="Create"
+    check_secret_exists "STATECHECKER_SERVER_KEYCLOAK_CLIENT_SECRET" && prompt_keycloak="Recreate"
+    read_prompt "$prompt_keycloak STATECHECKER_SERVER_KEYCLOAK_CLIENT_SECRET? (y/N): " create_keycloak
+    if [[ "$create_keycloak" =~ ^[Yy]$ ]]; then
+        create_secret_interactive "STATECHECKER_SERVER_KEYCLOAK_CLIENT_SECRET" "Keycloak client secret for backend authentication" || true
+    fi
 }
 
 create_optional_secrets_menu() {
