@@ -239,7 +239,7 @@ handle_keycloak_bootstrap() {
     echo ""
     
     # Load defaults from template first, then override with .env if it exists
-    local env_template="$SCRIPT_DIR/.env.template"
+    local env_template="$project_root/setup/.env.template"
     local keycloak_url="http://localhost:9090"
     local keycloak_realm="statechecker"
     local frontend_url="http://localhost:8788"
@@ -534,7 +534,7 @@ handle_keycloak_create_user() {
     echo ""
     
     # Load defaults from template first, then override with .env if it exists
-    local env_template="$SCRIPT_DIR/.env.template"
+    local env_template="$project_root/setup/.env.template"
     local keycloak_url="http://localhost:9090"
     local keycloak_realm="statechecker"
     
