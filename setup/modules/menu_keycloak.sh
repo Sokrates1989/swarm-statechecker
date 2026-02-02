@@ -17,6 +17,62 @@ STATECHECKER_ROLES=(
     "statechecker:read"
 )
 
+# _test_keycloak_admin_credentials
+# Tests if Keycloak admin credentials are valid by attempting to get a token.
+#
+# Arguments:
+# - $1: Keycloak base URL
+# - $2: Admin username
+# - $3: Admin password
+# Returns:
+# - 0 if credentials are valid, 1 otherwise
+_test_keycloak_admin_credentials() {
+    local keycloak_url="$1"
+    local admin_user="$2"
+    local admin_password="$3"
+    
+    # Try to get admin token
+    local token_url="${keycloak_url%/}/realms/master/protocol/openid-connect/token"
+    local response
+    
+    if command -v curl >/dev/null 2>&1; then
+        response=$(curl -s -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "grant_type=password&client_id=admin-cli&username=${admin_user}&password=${admin_password}" \
+            "$token_url")
+        local http_code="${response: -3}"
+        local body="${response%???}"
+        
+        if [ "$http_code" = "200" ] && echo "$body" | grep -q '"access_token"'; then
+            return 0
+        fi
+    elif command -v python3 >/dev/null 2>&1 && python3 -c "import requests" 2>/dev/null; then
+        response=$(python3 -c "
+import requests, sys, json
+try:
+    r = requests.post('${token_url}', data={
+        'grant_type': 'password',
+        'client_id': 'admin-cli',
+        'username': '${admin_user}',
+        'password': '${admin_password}'
+    })
+    if r.status_code == 200 and 'access_token' in r.json():
+        print('SUCCESS')
+    else:
+        print('FAILED')
+except:
+    print('FAILED')
+" 2>/dev/null)
+        
+        if [ "$response" = "SUCCESS" ]; then
+            return 0
+        fi
+    fi
+    
+    return 1
+}
+
 # _update_env_with_keycloak_config
 # Updates the .env file with Keycloak configuration values.
 # Args: $1=project_root, $2=keycloak_url, $3=realm, $4=frontend_client, $5=backend_client
@@ -337,14 +393,53 @@ handle_keycloak_bootstrap() {
     read admin_user
     admin_user="${admin_user:-admin}"
     
-    echo "🔑 Please enter the Keycloak admin password manually"
-    echo -n "🔑 Admin password: "
-    read -s admin_password
-    echo ""
-    if [ -z "$admin_password" ]; then
-        echo "❌ Admin password is required"
-        return 1
-    fi
+    # Get admin credentials with retry loop
+    local max_attempts=3
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        if [ $attempt -gt 1 ]; then
+            echo ""
+            echo "🔄 Attempt $attempt of $max_attempts"
+        fi
+        
+        echo "🔑 Please enter the Keycloak admin password manually"
+        echo -n "🔑 Admin password: "
+        read -s admin_password
+        echo ""
+        if [ -z "$admin_password" ]; then
+            echo "❌ Admin password is required"
+            if [ $attempt -eq $max_attempts ]; then
+                echo "❌ Maximum attempts reached"
+                return 1
+            fi
+            attempt=$((attempt + 1))
+            continue
+        fi
+        
+        # Test admin credentials immediately
+        echo "🔍 Testing admin credentials..."
+        if _test_keycloak_admin_credentials "$keycloak_url" "$admin_user" "$admin_password"; then
+            echo "✅ Admin credentials verified"
+            echo ""
+            break
+        else
+            echo "❌ Admin credentials are invalid"
+            echo ""
+            echo "Please check:"
+            echo "  1. The admin username and password are correct"
+            echo "  2. The Keycloak URL is accessible"
+            echo "  3. The admin user exists in the master realm"
+            echo ""
+            
+            if [ $attempt -eq $max_attempts ]; then
+                echo "❌ Maximum attempts reached. Please verify your credentials and try again."
+                return 1
+            fi
+            
+            attempt=$((attempt + 1))
+        fi
+    done
     
     echo -n "Realm name [$keycloak_realm]: "
     read realm
@@ -589,13 +684,52 @@ handle_keycloak_create_user() {
     read admin_user
     admin_user="${admin_user:-admin}"
     
-    echo -n "🔑 Admin password: "
-    read -s admin_password
-    echo ""
-    if [ -z "$admin_password" ]; then
-        echo "❌ Admin password is required"
-        return 1
-    fi
+    # Get admin credentials with retry loop
+    local max_attempts=3
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        if [ $attempt -gt 1 ]; then
+            echo ""
+            echo "🔄 Attempt $attempt of $max_attempts"
+        fi
+        
+        echo -n "🔑 Admin password: "
+        read -s admin_password
+        echo ""
+        if [ -z "$admin_password" ]; then
+            echo "❌ Admin password is required"
+            if [ $attempt -eq $max_attempts ]; then
+                echo "❌ Maximum attempts reached"
+                return 1
+            fi
+            attempt=$((attempt + 1))
+            continue
+        fi
+        
+        # Test admin credentials immediately
+        echo "🔍 Testing admin credentials..."
+        if _test_keycloak_admin_credentials "$keycloak_url" "$admin_user" "$admin_password"; then
+            echo "✅ Admin credentials verified"
+            echo ""
+            break
+        else
+            echo "❌ Admin credentials are invalid"
+            echo ""
+            echo "Please check:"
+            echo "  1. The admin username and password are correct"
+            echo "  2. The Keycloak URL is accessible"
+            echo "  3. The admin user exists in the master realm"
+            echo ""
+            
+            if [ $attempt -eq $max_attempts ]; then
+                echo "❌ Maximum attempts reached. Please verify your credentials and try again."
+                return 1
+            fi
+            
+            attempt=$((attempt + 1))
+        fi
+    done
     
     echo -n "Realm name [$keycloak_realm]: "
     read realm
