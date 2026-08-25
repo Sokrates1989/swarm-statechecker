@@ -3,8 +3,8 @@
   db:
     image: mysql:8
     environment:
-      - MYSQL_DATABASE=state_checker
-      - MYSQL_USER=state_checker
+      - MYSQL_DATABASE=${DB_NAME:-state_checker}
+      - MYSQL_USER=${DB_USER:-state_checker}
       - MYSQL_PASSWORD_FILE=/run/secrets/STATECHECKER_SERVER_DB_USER_PW
       - MYSQL_ROOT_PASSWORD_FILE=/run/secrets/STATECHECKER_SERVER_DB_ROOT_USER_PW
     secrets:
@@ -18,4 +18,3 @@
     deploy:
       mode: replicated
       replicas: 1
-

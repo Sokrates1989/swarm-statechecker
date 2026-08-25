@@ -14,9 +14,9 @@
       - CHECK_GOOGLEDRIVE_EVERY_X_MINUTES=${CHECK_GOOGLEDRIVE_EVERY_X_MINUTES}
       # Database connection.
       - DB_HOST=${STACK_NAME}_db
-      - DB_USER=state_checker
+      - DB_USER=${DB_USER:-state_checker}
       - DB_PW_FILE=/run/secrets/STATECHECKER_SERVER_DB_USER_PW
-      - DB_NAME=state_checker
+      - DB_NAME=${DB_NAME:-state_checker}
       # Initial data seeding (only used on first startup if database is empty).
       - INIT_WEBSITES=${INIT_WEBSITES:-}
       - INIT_GOOGLE_DRIVE_FOLDERS=${INIT_GOOGLE_DRIVE_FOLDERS:-}
@@ -53,4 +53,3 @@
       mode: replicated
       replicas: ${CHECK_REPLICAS:-1}
     command: ["python", "src/check_tools.py"]
-

@@ -117,11 +117,11 @@ show_deployment_overview() {
     local image_name
     image_name="$(_env_value_or_default "$env_file" "IMAGE_NAME" "sokrates1989/statechecker")"
     local image_version
-    image_version="$(_env_value_or_default "$env_file" "IMAGE_VERSION" "latest")"
+    image_version="$(_env_value_or_default "$env_file" "IMAGE_VERSION" "3.0.1")"
     local web_image_name
     web_image_name="$(_env_value_or_default "$env_file" "WEB_IMAGE_NAME" "sokrates1989/statechecker-web")"
     local web_image_version
-    web_image_version="$(_env_value_or_default "$env_file" "WEB_IMAGE_VERSION" "latest")"
+    web_image_version="$(_env_value_or_default "$env_file" "WEB_IMAGE_VERSION" "3.0.1")"
 
     local stack_state="not running"
     if _stack_running "$stack_name"; then
@@ -262,12 +262,12 @@ update_images_menu() {
 
     case "$img_choice" in
         1)
-            local current_tag="${IMAGE_VERSION:-latest}"
+            local current_tag="${IMAGE_VERSION:-3.0.1}"
             read_prompt "Enter new API/CHECK image tag [$current_tag]: " new_tag
             _update_image_service "$IMAGE_NAME" "${new_tag:-$current_tag}" "api_check" "IMAGE_VERSION"
             ;;
         2)
-            local current_tag="${WEB_IMAGE_VERSION:-latest}"
+            local current_tag="${WEB_IMAGE_VERSION:-3.0.1}"
             read_prompt "Enter new WEB image tag [$current_tag]: " new_tag
             _update_image_service "$WEB_IMAGE_NAME" "${new_tag:-$current_tag}" "web" "WEB_IMAGE_VERSION"
             ;;
@@ -604,12 +604,24 @@ _render_stack_config() {
 deploy_stack() {
     # deploy_stack
     # Deploys the Docker Swarm stack using swarm-stack.yml.
-    local stack_name="${STACK_NAME:-statechecker}"
-    echo "🚀 Deploying stack: $stack_name"
-    echo ""
-    
     [ -f .env ] || { echo "❌ .env file not found. Please create it first."; return 1; }
     load_env
+
+    local stack_name="${STACK_NAME:-statechecker}"
+    local cmd_str
+    cmd_str=$(_get_compose_command)
+
+    echo "🚀 Deploying stack: $stack_name"
+    echo ""
+
+    if [ -z "$cmd_str" ]; then
+        echo "❌ Docker Compose is required to render and validate swarm-stack.yml."
+        return 1
+    fi
+
+    if ! run_deployment_preflight ".env" "swarm-stack.yml"; then
+        return 1
+    fi
 
     if [ "${TELEGRAM_ENABLED:-false}" != "true" ] && ! check_secret_exists "STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN"; then
         echo "[INFO] TELEGRAM_ENABLED=false and secret missing; creating placeholder secret STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN"
@@ -626,17 +638,15 @@ deploy_stack() {
         printf '%s' '{}' | docker secret create "STATECHECKER_SERVER_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON" - >/dev/null 2>&1 || true
     fi
 
-    local cmd_str
-    cmd_str=$(_get_compose_command)
-    if [ -z "$cmd_str" ]; then
-        echo "⚠️  Neither docker-compose nor 'docker compose' is available. Deploying raw stack file."
-        docker stack deploy -c swarm-stack.yml "$stack_name"
-        return $?
-    fi
-
     local temp_config=".stack-deploy-temp.yml"
     if ! _render_stack_config "$cmd_str" ".env" "$temp_config"; then
         echo "❌ Failed to render swarm-stack.yml via docker compose"
+        rm -f "$temp_config" 2>/dev/null || true
+        return 1
+    fi
+
+    if ! preflight_rendered_stack "$temp_config"; then
+        echo "❌ Rendered stack validation failed"
         rm -f "$temp_config" 2>/dev/null || true
         return 1
     fi
@@ -665,6 +675,8 @@ deploy_stack() {
     else
         echo "❌ Failed to deploy stack"
     fi
+
+    return "$deploy_rc"
 }
 
 # Helper: Wait for stack and its networks to be fully removed
@@ -797,7 +809,10 @@ _print_pma_enabled_msg() {
         echo "phpMyAdmin is now ENABLED. Access it via http://localhost:${PHPMYADMIN_PORT:-8081}"
     else
         local url
-        url=$(grep '^PHPMYADMIN_URL=' .env 2>/dev/null | cut -d'=' -f2- | tr -d ' "')
+        url=$(grep '^PHPMYADMIN_DOMAIN=' .env 2>/dev/null | cut -d'=' -f2- | tr -d ' "')
+        if [ -z "$url" ]; then
+            url=$(grep '^PHPMYADMIN_URL=' .env 2>/dev/null | cut -d'=' -f2- | tr -d ' "')
+        fi
         [ -n "$url" ] && echo "phpMyAdmin is now ENABLED. Access it via https://$url" || echo "phpMyAdmin is now ENABLED."
     fi
 }
@@ -1055,7 +1070,7 @@ _handle_main_menu_choice() {
             echo "   - Created Docker secrets"
             if [ "${PROXY_TYPE:-traefik}" = "traefik" ]; then
                 echo "   - Configured your domain DNS (Traefik mode)"
-                echo "   - Set API_URL / PHPMYADMIN_URL / WEB_URL to real hostnames"
+                echo "   - Set API_DOMAIN / PHPMYADMIN_DOMAIN / WEB_DOMAIN to real hostnames"
             else
                 echo "   - Set WEB_PORT / PHPMYADMIN_PORT for localhost access (no-proxy mode)"
             fi

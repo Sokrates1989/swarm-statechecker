@@ -15,7 +15,7 @@ This directory contains setup helpers, templates, and the setup wizard for Swarm
 
 # 📖 Overview
 
-This setup wizard helps you:
+The authoritative Bash setup wizard helps you:
 
 - Create required Docker secrets
 - Create/update `.env`
@@ -45,6 +45,9 @@ Run the setup wizard from the repository root:
 # Windows (PowerShell)
 .\quick-start.ps1
 ```
+
+The PowerShell entry point delegates to `quick-start.sh` through WSL/Bash so
+both platforms use the same menus, validation, and deployment behavior.
 
 ## 📝 Configuration
 

@@ -13,6 +13,7 @@ cd "$PROJECT_ROOT"
 source "$SCRIPT_DIR/modules/docker_helpers.sh"
 source "$SCRIPT_DIR/modules/menu_handlers.sh"
 source "$SCRIPT_DIR/modules/health-check.sh"
+source "$SCRIPT_DIR/modules/deployment-preflight.sh"
 source "$SCRIPT_DIR/modules/data-dirs.sh"
 source "$SCRIPT_DIR/modules/wizard.sh"
 source "$SCRIPT_DIR/modules/config-builder.sh"
@@ -44,6 +45,13 @@ _validate_http_url() {
     # Validates a URL with http/https scheme.
     local value="$1"
     local pattern='^https?://[A-Za-z0-9.-]+\.[A-Za-z]{2,}(:[0-9]{1,5})?([/?#].*)?$'
+    [[ "$value" =~ $pattern ]]
+}
+
+_validate_internal_http_url() {
+    # Validate an internal HTTP URL, including single-label service hostnames.
+    local value="$1"
+    local pattern='^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?([/?#].*)?$'
     [[ "$value" =~ $pattern ]]
 }
 
@@ -257,14 +265,61 @@ _prompt_image_config() {
     read_prompt "API/CHECK image name [${current_image:-sokrates1989/statechecker}]: " image_name
     update_env_values "$env_file" "IMAGE_NAME" "${image_name:-${current_image:-sokrates1989/statechecker}}"
 
-    read_prompt "API/CHECK image tag [${current_tag:-latest}]: " image_tag
-    update_env_values "$env_file" "IMAGE_VERSION" "${image_tag:-${current_tag:-latest}}"
+    read_prompt "API/CHECK image tag [${current_tag:-3.0.1}]: " image_tag
+    update_env_values "$env_file" "IMAGE_VERSION" "${image_tag:-${current_tag:-3.0.1}}"
 
     read_prompt "WEB image name [${current_web_image:-sokrates1989/statechecker-web}]: " web_image_name
     update_env_values "$env_file" "WEB_IMAGE_NAME" "${web_image_name:-${current_web_image:-sokrates1989/statechecker-web}}"
 
-    read_prompt "WEB image tag [${current_web_tag:-latest}]: " web_image_tag
-    update_env_values "$env_file" "WEB_IMAGE_VERSION" "${web_image_tag:-${current_web_tag:-latest}}"
+    read_prompt "WEB image tag [${current_web_tag:-3.0.1}]: " web_image_tag
+    update_env_values "$env_file" "WEB_IMAGE_VERSION" "${web_image_tag:-${current_web_tag:-3.0.1}}"
+}
+
+_prompt_keycloak_config() {
+    # Prompt for the Keycloak endpoints and client identifiers required by the UI.
+    local env_file="$1"
+    local current_url current_internal_url current_realm current_backend_client current_frontend_client
+    current_url=$(grep '^KEYCLOAK_URL=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    current_internal_url=$(grep '^KEYCLOAK_INTERNAL_URL=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    current_realm=$(grep '^KEYCLOAK_REALM=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    current_backend_client=$(grep '^KEYCLOAK_CLIENT_ID=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+    current_frontend_client=$(grep '^KEYCLOAK_CLIENT_ID_WEB=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
+
+    echo "" >&2
+    echo "[CONFIG] Keycloak Authentication" >&2
+    echo "--------------------------------" >&2
+
+    local keycloak_url
+    while true; do
+        read_prompt "Public Keycloak URL [${current_url:-https://keycloak.yourdomain.com}]: " keycloak_url
+        keycloak_url="${keycloak_url:-${current_url:-https://keycloak.yourdomain.com}}"
+        if _validate_http_url "$keycloak_url" && \
+            [ "$keycloak_url" != "https://keycloak.yourdomain.com" ] && \
+            [ "$keycloak_url" != "https://keycloak.domain.de" ]; then
+            break
+        fi
+        echo "[WARN] Enter the real, complete http:// or https:// Keycloak URL." >&2
+    done
+    update_env_values "$env_file" "KEYCLOAK_URL" "$keycloak_url"
+
+    local keycloak_internal_url
+    read_prompt "Internal Keycloak URL (optional) [${current_internal_url}]: " keycloak_internal_url
+    keycloak_internal_url="${keycloak_internal_url:-$current_internal_url}"
+    if [ -n "$keycloak_internal_url" ] && ! _validate_internal_http_url "$keycloak_internal_url"; then
+        echo "[WARN] Invalid internal URL; leaving KEYCLOAK_INTERNAL_URL empty." >&2
+        keycloak_internal_url=""
+    fi
+    update_env_values "$env_file" "KEYCLOAK_INTERNAL_URL" "$keycloak_internal_url"
+
+    local keycloak_realm backend_client frontend_client
+    read_prompt "Keycloak realm [${current_realm:-statechecker}]: " keycloak_realm
+    update_env_values "$env_file" "KEYCLOAK_REALM" "${keycloak_realm:-${current_realm:-statechecker}}"
+
+    read_prompt "Backend client ID [${current_backend_client:-statechecker-backend}]: " backend_client
+    update_env_values "$env_file" "KEYCLOAK_CLIENT_ID" "${backend_client:-${current_backend_client:-statechecker-backend}}"
+
+    read_prompt "Frontend client ID [${current_frontend_client:-statechecker-frontend}]: " frontend_client
+    update_env_values "$env_file" "KEYCLOAK_CLIENT_ID_WEB" "${frontend_client:-${current_frontend_client:-statechecker-frontend}}"
 }
 
 _prompt_timezone_config() {
@@ -282,9 +337,9 @@ _prompt_telegram_config() {
     # _prompt_telegram_config
     # Prompts for Telegram-related configuration and persists it into .env.
     local env_file="$1"
-    local current_enabled current_error_ids current_info_ids current_status_minutes
+    local current_error_ids current_info_ids current_status_minutes
+    local enable_telegram=""
 
-    current_enabled=$(grep '^TELEGRAM_ENABLED=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
     current_error_ids=$(grep '^TELEGRAM_RECIPIENTS_ERROR_CHAT_IDS=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
     current_info_ids=$(grep '^TELEGRAM_RECIPIENTS_INFO_CHAT_IDS=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
     current_status_minutes=$(grep '^TELEGRAM_STATUS_MESSAGES_EVERY_X_MINUTES=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
@@ -310,9 +365,9 @@ _prompt_email_config() {
     # _prompt_email_config
     # Prompts for Email-related configuration and persists it into .env.
     local env_file="$1"
-    local current_enabled current_user current_host current_port current_rcpt_err current_rcpt_info
+    local current_user current_host current_port current_rcpt_err current_rcpt_info
+    local enable_email=""
 
-    current_enabled=$(grep '^EMAIL_ENABLED=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
     current_user=$(grep '^EMAIL_SENDER_USER=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
     current_host=$(grep '^EMAIL_SENDER_HOST=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
     current_port=$(grep '^EMAIL_SENDER_PORT=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"')
@@ -347,7 +402,7 @@ _prompt_websites_to_check() {
     # Prompts for a list of websites to check.
     #
     # Returns:
-    # - A JSON array string (e.g. ["https://a","https://b"]) via stdout
+    # - A comma-separated INIT_WEBSITES value via stdout.
     local websites=()
     local -A website_seen
     local input_url=""
@@ -388,63 +443,9 @@ _prompt_websites_to_check() {
         done <<< "$expanded"
     done
 
-    local json="["
-    local first=true
-    local url
-    for url in "${websites[@]}"; do
-        local escaped
-        escaped="$url"
-        escaped="${escaped//\\/\\\\}"
-        escaped="${escaped//\"/\\\"}"
-        if [ "$first" = true ]; then
-            first=false
-        else
-            json+="," 
-        fi
-        json+="\"${escaped}\""
-    done
-    json+="]"
-
-    if [[ ! "$json" =~ ^\[.*\]$ ]]; then
-        echo "[ERROR] Internal error: websites list is not a JSON array." >&2
-        return 1
-    fi
-
-    # Return only the JSON to stdout
-    printf '%s\n' "$json"
-}
-
-_update_statechecker_server_config() {
-    # _update_statechecker_server_config
-    # Regenerates STATECHECKER_SERVER_CONFIG based on env values and websites list.
-    local env_file="$1"
-    local websites_json_array="$2"
-
-    local tz check_web_every check_gd_every status_offset
-    local telegram_err telegram_info telegram_status
-
-    tz=$(grep '^TIMEZONE=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"\r')
-    check_web_every=$(grep '^CHECK_WEBSITES_EVERY_X_MINUTES=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"\r')
-    check_gd_every=$(grep '^CHECK_GOOGLEDRIVE_EVERY_X_MINUTES=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"\r')
-    status_offset=$(grep '^STATUS_MESSAGES_TIME_OFFSET_PERCENTAGE=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"\r')
-
-    telegram_err=$(grep '^TELEGRAM_RECIPIENTS_ERROR_CHAT_IDS=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"\r')
-    telegram_info=$(grep '^TELEGRAM_RECIPIENTS_INFO_CHAT_IDS=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"\r')
-    telegram_status=$(grep '^TELEGRAM_STATUS_MESSAGES_EVERY_X_MINUTES=' "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '"\r')
-
-    check_web_every="${check_web_every:-30}"
-    check_gd_every="${check_gd_every:-60}"
-    status_offset="${status_offset:-2.5}"
-    telegram_status="${telegram_status:-60}"
-
-    websites_json_array="${websites_json_array//$'\r'/}"
-
-    local config_json
-    config_json="{\"toolsUsingApi_tolerancePeriod_inSeconds\":\"100\",\"telegram\":{\"botToken\":\"USE_SECRET_INSTEAD\",\"errorChatID\":\"${telegram_err}\",\"infoChatID\":\"${telegram_info}\",\"adminStatusMessage_everyXMinutes\":\"${telegram_status}\",\"adminStatusMessage_operationTime_offsetPercentage\":\"${status_offset}\"},\"websites\":{\"checkWebSitesEveryXMinutes\":${check_web_every},\"websitesToCheck\":${websites_json_array}},\"googleDrive\":{\"checkFilesEveryXMinutes\":${check_gd_every},\"foldersToCheck\":[]}}"
-
-    config_json="${config_json//$'\r'/}"
-
-    update_env_values "$env_file" "STATECHECKER_SERVER_CONFIG" "$config_json"
+    local joined_websites
+    joined_websites=$(IFS=,; printf '%s' "${websites[*]}")
+    printf '%s\n' "$joined_websites"
 }
 
 prompt_update_env_values() {
@@ -463,7 +464,7 @@ prompt_update_env_values() {
     read_prompt "Stack name [${current_stack_name:-$default_stack_name}]: " stack_name
     update_env_values "$env_file" "STACK_NAME" "${stack_name:-${current_stack_name:-$default_stack_name}}"
 
-    local default_data_root="${PROJECT_ROOT:-$(pwd)}"
+    local default_data_root="${current_data_root:-${PROJECT_ROOT:-$(pwd)}}"
     read_prompt "Data root [$default_data_root]: " data_root
     update_env_values "$env_file" "DATA_ROOT" "${data_root:-$default_data_root}"
 
@@ -474,6 +475,7 @@ prompt_update_env_values() {
 
     _prompt_proxy_config "$env_file" "$proxy_type"
     _prompt_image_config "$env_file"
+    _prompt_keycloak_config "$env_file"
 
     echo "" >&2
     echo "==========================" >&2
@@ -485,12 +487,12 @@ prompt_update_env_values() {
     _prompt_telegram_config "$env_file"
     _prompt_email_config "$env_file"
 
-    local websites_json
-    if ! websites_json=$(_prompt_websites_to_check); then
+    local websites_csv
+    if ! websites_csv=$(_prompt_websites_to_check); then
         echo "❌ [ERROR] Failed to collect websites list. Aborting wizard." >&2
         exit 1
     fi
-    _update_statechecker_server_config "$env_file" "$websites_json"
+    update_env_values "$env_file" "INIT_WEBSITES" "$websites_csv"
 }
 
 mark_setup_complete() {
@@ -502,6 +504,10 @@ mark_setup_complete() {
 main() {
     # main
     # Entry point for the setup wizard.
+
+    local rerun=""
+    local create_optional=""
+    local deploy_now=""
 
     echo "==========================================" >&2
     echo "  Swarm Statechecker - Setup Wizard" >&2
@@ -578,9 +584,9 @@ main() {
         fi
 
         IMAGE_NAME="${IMAGE_NAME:-sokrates1989/statechecker}"
-        IMAGE_VERSION="${IMAGE_VERSION:-latest}"
+        IMAGE_VERSION="${IMAGE_VERSION:-3.0.1}"
         WEB_IMAGE_NAME="${WEB_IMAGE_NAME:-sokrates1989/statechecker-web}"
-        WEB_IMAGE_VERSION="${WEB_IMAGE_VERSION:-latest}"
+        WEB_IMAGE_VERSION="${WEB_IMAGE_VERSION:-3.0.1}"
         update_env_values "$PROJECT_ROOT/.env" "IMAGE_NAME" "$IMAGE_NAME"
         update_env_values "$PROJECT_ROOT/.env" "IMAGE_VERSION" "$IMAGE_VERSION"
         update_env_values "$PROJECT_ROOT/.env" "WEB_IMAGE_NAME" "$WEB_IMAGE_NAME"

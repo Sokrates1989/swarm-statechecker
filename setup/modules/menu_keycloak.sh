@@ -327,6 +327,8 @@ handle_keycloak_bootstrap() {
         keycloak_realm=$(_read_env_value_with_default "$env_template" "KEYCLOAK_REALM" "$keycloak_realm")
         frontend_url=$(_read_env_value_with_default "$env_template" "WEB_URL" "$frontend_url")
         backend_url=$(_read_env_value_with_default "$env_template" "API_URL" "$backend_url")
+        frontend_url=$(_read_env_value_with_default "$env_template" "WEB_DOMAIN" "$frontend_url")
+        backend_url=$(_read_env_value_with_default "$env_template" "API_DOMAIN" "$backend_url")
     fi
     
     # Override with actual .env if it exists
@@ -335,6 +337,8 @@ handle_keycloak_bootstrap() {
         keycloak_realm=$(_read_env_value_with_default "$project_root/.env" "KEYCLOAK_REALM" "$keycloak_realm")
         frontend_url=$(_read_env_value_with_default "$project_root/.env" "WEB_URL" "$frontend_url")
         backend_url=$(_read_env_value_with_default "$project_root/.env" "API_URL" "$backend_url")
+        frontend_url=$(_read_env_value_with_default "$project_root/.env" "WEB_DOMAIN" "$frontend_url")
+        backend_url=$(_read_env_value_with_default "$project_root/.env" "API_DOMAIN" "$backend_url")
     fi
     
     # Ensure URLs have protocol for display in prompts
@@ -620,7 +624,7 @@ handle_keycloak_bootstrap() {
         echo "      - Or run: docker stack deploy -c swarm-stack.yml statechecker"
         echo ""
         echo "   5️⃣  Access the Statechecker UI:"
-        echo "      - URL: https://statechecker.fe-wi.com (or your WEB_URL)"
+        echo "      - URL: https://statechecker.fe-wi.com (or your WEB_DOMAIN)"
         echo "      - Login with the user(s) you created during bootstrap"
         echo ""
         echo "📋 Your .env file has been updated with:"

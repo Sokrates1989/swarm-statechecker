@@ -1,0 +1,302 @@
+"""Verify reproducible Statechecker setup and deployment contracts.
+
+The tests are local and read-only with respect to Docker. POSIX-only cases
+generate stack files inside temporary directories and never contact a daemon.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+SETUP_DIRECTORY = REPOSITORY_ROOT / "setup"
+COMPOSE_DIRECTORY = SETUP_DIRECTORY / "compose-modules"
+CONFIG_BUILDER = SETUP_DIRECTORY / "modules" / "config-builder.sh"
+DEPLOYMENT_PREFLIGHT = (
+    SETUP_DIRECTORY / "modules" / "deployment-preflight.sh"
+)
+HEALTH_CHECK = SETUP_DIRECTORY / "modules" / "health-check.sh"
+
+
+def run_bash(
+    script: str, *arguments: Path | str, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    """Run a Bash fragment with supplied positional arguments.
+
+    Args:
+        script: Bash source passed to ``bash -c``.
+        *arguments: Values exposed to the fragment as ``$1`` onward.
+        check: Whether a nonzero process status raises an exception.
+
+    Returns:
+        Completed process with captured standard output and error.
+    """
+
+    return subprocess.run(
+        ["bash", "-c", script, "statechecker-deployment-test", *map(str, arguments)],
+        check=check,
+        capture_output=True,
+        text=True,
+    )
+
+
+class DeploymentContractTests(unittest.TestCase):
+    """Protect version, configuration, wrapper, and validation contracts."""
+
+    def test_environment_templates_pin_the_current_application_version(self) -> None:
+        """Keep every supported starting template away from mutable tags."""
+
+        templates = (
+            REPOSITORY_ROOT / ".env.template",
+            SETUP_DIRECTORY / ".env.template",
+            SETUP_DIRECTORY / "env-templates" / ".env.base.template",
+        )
+        for template in templates:
+            content = template.read_text(encoding="utf-8")
+            self.assertIn("IMAGE_VERSION=3.0.1", content, template)
+            self.assertIn("WEB_IMAGE_VERSION=3.0.1", content, template)
+            self.assertNotIn("IMAGE_VERSION=latest", content, template)
+            self.assertNotIn("WEB_IMAGE_VERSION=latest", content, template)
+
+    def test_guided_websites_use_the_database_seed_contract(self) -> None:
+        """Write wizard selections to variables consumed during startup."""
+
+        wizard = (SETUP_DIRECTORY / "setup-wizard.sh").read_text(encoding="utf-8")
+        base_environment = (
+            SETUP_DIRECTORY / "env-templates" / ".env.base.template"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'update_env_values "$env_file" "INIT_WEBSITES" "$websites_csv"',
+            wizard,
+        )
+        self.assertIn("INIT_WEBSITES=", base_environment)
+        self.assertIn("INIT_GOOGLE_DRIVE_FOLDERS=", base_environment)
+        self.assertIn("KEYCLOAK_URL=", base_environment)
+        self.assertIn('_prompt_keycloak_config "$env_file"', wizard)
+        self.assertNotIn("_update_statechecker_server_config", wizard)
+        self.assertNotIn("STATECHECKER_SERVER_CONFIG=", base_environment)
+
+    def test_api_and_checker_receive_initial_seed_values(self) -> None:
+        """Expose the same initial configuration to both application services."""
+
+        application_templates = "\n".join(
+            (COMPOSE_DIRECTORY / file_name).read_text(encoding="utf-8")
+            for file_name in ("api.template.yml", "check.template.yml")
+        )
+
+        self.assertEqual(application_templates.count("INIT_WEBSITES="), 2)
+        self.assertEqual(
+            application_templates.count("INIT_GOOGLE_DRIVE_FOLDERS="), 2
+        )
+
+    def test_direct_port_placeholders_are_service_level_fields(self) -> None:
+        """Keep direct ports outside the Swarm-only deploy section."""
+
+        for file_name, placeholder in (
+            ("api.template.yml", "###PROXY_PORTS###"),
+            ("web.template.yml", "###PROXY_PORTS_WEB###"),
+        ):
+            template = (COMPOSE_DIRECTORY / file_name).read_text(encoding="utf-8")
+            self.assertLess(template.index(placeholder), template.index("    deploy:"))
+
+    def test_traefik_labels_select_the_swarm_network(self) -> None:
+        """Use the Traefik Swarm-provider network override on every router."""
+
+        snippets = COMPOSE_DIRECTORY / "snippets"
+        labels = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in snippets.glob("proxy-traefik-*.labels.yml")
+        )
+
+        self.assertEqual(labels.count("traefik.swarm.network=${TRAEFIK_NETWORK}"), 6)
+        self.assertNotIn("traefik.docker.network", labels)
+
+    def test_powershell_delegates_to_the_canonical_bash_entrypoint(self) -> None:
+        """Prevent a second PowerShell setup implementation from drifting."""
+
+        powershell_files = sorted(
+            path.relative_to(REPOSITORY_ROOT)
+            for path in REPOSITORY_ROOT.rglob("*.ps1")
+        )
+        wrapper = (REPOSITORY_ROOT / "quick-start.ps1").read_text(encoding="utf-8")
+
+        self.assertEqual(powershell_files, [Path("quick-start.ps1")])
+        self.assertIn('"./quick-start.sh"', wrapper)
+        self.assertIn("$bashCommand.Source", wrapper)
+        self.assertNotIn("Import-Module", wrapper)
+
+    def test_deploy_path_is_preflighted_and_always_rendered(self) -> None:
+        """Validate inputs before secret creation and reject raw stack deploys."""
+
+        menu = (SETUP_DIRECTORY / "modules" / "menu_handlers.sh").read_text(
+            encoding="utf-8"
+        )
+        deploy = menu.split("deploy_stack() {", 1)[1].split(
+            "# Helper: Wait for stack", 1
+        )[0]
+
+        self.assertLess(
+            deploy.index("run_deployment_preflight"),
+            deploy.index("docker secret create"),
+        )
+        self.assertLess(
+            deploy.index("preflight_rendered_stack"),
+            deploy.index("docker stack deploy"),
+        )
+        self.assertNotIn("Deploying raw stack file", deploy)
+
+        preflight = DEPLOYMENT_PREFLIGHT.read_text(encoding="utf-8")
+        self.assertIn("check_required_secrets", preflight)
+        self.assertIn('docker network inspect "$traefik_network"', preflight)
+        self.assertIn("preflight_rendered_stack", preflight)
+
+        quick_start = (REPOSITORY_ROOT / "quick-start.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('tests/render-stack-smoke.sh', quick_start)
+
+    def test_health_contract_checks_convergence_tasks_and_http(self) -> None:
+        """Require the operator health command to fail on material problems."""
+
+        health = (SETUP_DIRECTORY / "modules" / "health-check.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("_check_service_convergence", health)
+        self.assertIn("_check_active_task_failures", health)
+        self.assertIn("curl --fail", health)
+        self.assertIn('if [ "$HEALTH_FAILURES" -ne 0 ]', health)
+        self.assertIn("return 1", health)
+
+
+@unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "POSIX Bash required")
+class GeneratedStackTests(unittest.TestCase):
+    """Exercise stack generation and static preflight in isolation."""
+
+    def test_no_proxy_stack_contains_required_contracts(self) -> None:
+        """Generate a complete stack without leaving template placeholders."""
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project_root = Path(temporary_directory) / "project"
+            modules = project_root / "setup" / "compose-modules"
+            shutil.copytree(COMPOSE_DIRECTORY, modules)
+
+            run_bash(
+                'source "$1"; build_stack_file none "$2" direct true true',
+                CONFIG_BUILDER,
+                project_root,
+            )
+            generated_stack = project_root / "swarm-stack.yml"
+            stack = generated_stack.read_text(encoding="utf-8")
+
+            for service in (
+                "api",
+                "check",
+                "db",
+                "db-migration",
+                "phpmyadmin",
+                "web",
+            ):
+                self.assertIn(f"  {service}:", stack)
+            self.assertIn("INIT_WEBSITES=${INIT_WEBSITES:-}", stack)
+            self.assertIn("STATECHECKER_SERVER_KEYCLOAK_CLIENT_SECRET", stack)
+            self.assertIn('      - "${API_PORT}:${API_PORT}"', stack)
+            self.assertIn('      - "${WEB_PORT}:80"', stack)
+            self.assertIn('      - "${PHPMYADMIN_PORT}:80"', stack)
+            self.assertNotIn("###", stack)
+
+            run_bash(
+                'source "$1"; DEPLOYMENT_PREFLIGHT_FAILURES=0; '
+                'preflight_stack_contract "$2"',
+                DEPLOYMENT_PREFLIGHT,
+                generated_stack,
+            )
+
+    def test_environment_preflight_rejects_latest(self) -> None:
+        """Fail before deployment when a mutable image tag is configured."""
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            environment_file = Path(temporary_directory) / ".env"
+            environment_file.write_text(
+                "STACK_NAME=statechecker\n"
+                "DATA_ROOT=/tmp/statechecker\n"
+                "PROXY_TYPE=none\n"
+                "IMAGE_NAME=sokrates1989/statechecker\n"
+                "IMAGE_VERSION=latest\n"
+                "WEB_IMAGE_NAME=sokrates1989/statechecker-web\n"
+                "WEB_IMAGE_VERSION=3.0.1\n"
+                "API_PORT=8787\n"
+                "WEB_PORT=8080\n",
+                encoding="utf-8",
+            )
+
+            process = run_bash(
+                'source "$1"; DEPLOYMENT_PREFLIGHT_FAILURES=0; '
+                'preflight_environment_contract "$2"',
+                DEPLOYMENT_PREFLIGHT,
+                environment_file,
+                check=False,
+            )
+
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("Mutable 'latest' image tags", process.stderr)
+
+    def test_health_status_tracks_external_reachability(self) -> None:
+        """Return nonzero when endpoints fail and zero when they are reachable."""
+
+        harness = r'''
+            source "$1"
+            CURL_MODE="$2"
+            docker() {
+                if [ "$1 $2" = "stack services" ]; then
+                    if [[ "$*" == *"--format"* ]]; then
+                        printf '%s\n' \
+                            'statechecker_api|1/1' \
+                            'statechecker_check|1/1' \
+                            'statechecker_db|1/1' \
+                            'statechecker_db-migration|0/1' \
+                            'statechecker_web|1/1'
+                    else
+                        printf '%s\n' 'statechecker services'
+                    fi
+                    return 0
+                fi
+                if [ "$1 $2" = "stack ps" ]; then
+                    return 0
+                fi
+                if [ "$1 $2" = "service inspect" ]; then
+                    return 0
+                fi
+                if [ "$1 $2" = "service ps" ]; then
+                    printf '%s\n' 'Complete 1 second ago'
+                    return 0
+                fi
+                return 0
+            }
+            curl() {
+                [ "$CURL_MODE" = "success" ]
+            }
+            tail_logs_all_services() { return 0; }
+            API_PORT=8787
+            WEB_PORT=8080
+            check_deployment_health statechecker none 0 10m 20
+        '''
+
+        failed = run_bash(harness, HEALTH_CHECK, "failure", check=False)
+        healthy = run_bash(harness, HEALTH_CHECK, "success", check=False)
+
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("endpoint is unreachable or unhealthy", failed.stderr)
+        self.assertEqual(healthy.returncode, 0, healthy.stderr)
+        self.assertIn("Deployment is converged", healthy.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,6 +1,6 @@
 # 🚀 swarm-statechecker README
 
-Docker Swarm deployment for the **statechecker** stack (API + checker + MySQL + optional phpMyAdmin).
+Docker Swarm deployment tooling for the **statechecker** application stack.
 
 <br>
 
@@ -18,13 +18,17 @@ Docker Swarm deployment for the **statechecker** stack (API + checker + MySQL + 
 
 # 📖 Overview
 
-This repository provides a `swarm-stack.yml` for deploying statechecker to Docker Swarm.
+The Bash setup wizard generates `swarm-stack.yml` from tracked templates and
+deploys the result after read-only configuration, secret, network, and render
+validation.
 
 Services:
 
 - **api**: FastAPI REST API
 - **check**: periodic checker
 - **db**: MySQL database
+- **db-migration**: one-shot database migration service
+- **web**: Nginx web interface
 - **phpmyadmin**: optional DB UI
 
 The stack uses `${IMAGE_NAME}:${IMAGE_VERSION}` (from `.env`) for both `api` and `check`.
@@ -35,19 +39,20 @@ The stack uses `${IMAGE_NAME}:${IMAGE_VERSION}` (from `.env`) for both `api` and
 # 🧑‍💻 Usage
 
 ```bash
-# Run setup wizard
+# Run the authoritative Bash setup and management CLI.
 ./quick-start.sh
-
-# Deploy stack
-docker stack deploy -c <(docker compose -f swarm-stack.yml --env-file .env config) statechecker-server
 ```
+
+On Windows, `quick-start.ps1` is a thin WSL/Bash launcher for the same CLI. It
+does not maintain a separate PowerShell setup implementation.
 
 <br>
 <br>
 
 # 🛠️ Configuration / Installation / Setup
 
-1) Copy template:
+The recommended path is the guided wizard started by `./quick-start.sh`. For a
+manual starting point, copy the complete template:
 
 ```bash
 cp setup/.env.template .env
@@ -58,7 +63,11 @@ cp setup/.env.template .env
 - `STACK_NAME`
 - `DATA_ROOT`
 - `IMAGE_NAME`, `IMAGE_VERSION`
-- Traefik settings (optional)
+- `PROXY_TYPE` and either direct ports or Traefik network/domains
+- `INIT_WEBSITES` for first-start database seeding (optional)
+
+Use explicit image versions. The templates currently default to `3.0.1` and
+the deployment preflight rejects mutable `latest` tags.
 
 <br>
 <br>
@@ -70,6 +79,7 @@ Required secrets:
 - `STATECHECKER_SERVER_AUTHENTICATION_TOKEN`
 - `STATECHECKER_SERVER_DB_ROOT_USER_PW`
 - `STATECHECKER_SERVER_DB_USER_PW`
+- `STATECHECKER_SERVER_KEYCLOAK_CLIENT_SECRET`
 
 Optional secrets:
 
@@ -87,8 +97,32 @@ You can create secrets interactively via the quick-start wizard.
 Use the quick-start menu:
 
 - `Deploy stack`
+- `Health check`
 
-This renders `swarm-stack.yml` with env substitution and runs `docker stack deploy`.
+Deployment renders `swarm-stack.yml` with Docker Compose before running
+`docker stack deploy`. The preflight fails when required configuration,
+secrets, generated services, or the selected Traefik network are missing.
+
+The health command fails when persistent services are not converged, active
+tasks are rejected or failed, the migration task failed, or the public API/web
+endpoints cannot be reached. It is also available non-interactively:
+
+```bash
+./quick-start.sh --health
+```
+
+## Local validation
+
+From the repository root:
+
+```bash
+python -B -m unittest discover -s tests -v
+./quick-start.sh --smoke-test
+```
+
+The unit tests do not contact Docker. The smoke test checks Bash syntax and
+renders the no-proxy, direct-TLS, and proxy-TLS stacks with Docker Compose. It
+does not contact Swarm or deploy anything.
 
 <br>
 <br>
@@ -125,8 +159,10 @@ To restore from a SQL backup:
 
 # 🚀 Summary
 
-✅ Swarm deployment uses `${IMAGE_NAME}:${IMAGE_VERSION}`.
+✅ Swarm deployment uses explicitly versioned application images.
 
 ✅ Secrets are managed by the setup wizard.
 
 ✅ `api` and `check` share the same application image.
+
+✅ Bash is the authoritative CLI; PowerShell delegates to it.

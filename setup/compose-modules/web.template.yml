@@ -18,9 +18,8 @@
     networks:
       - backend
 ###PROXY_NETWORK_WEB###
+###PROXY_PORTS_WEB###
     deploy:
 ###PROXY_LABELS_WEB###
-###PROXY_PORTS_WEB###
       mode: replicated
       replicas: ${WEB_REPLICAS:-1}
-

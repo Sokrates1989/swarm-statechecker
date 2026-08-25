@@ -14,9 +14,9 @@
       - TOOLS_USING_API_TOLERANCE_PERIOD_IN_SECONDS=${TOOLS_USING_API_TOLERANCE_PERIOD_IN_SECONDS:-100}
       # Database connection.
       - DB_HOST=${STACK_NAME}_db
-      - DB_USER=state_checker
+      - DB_USER=${DB_USER:-state_checker}
       - DB_PW_FILE=/run/secrets/STATECHECKER_SERVER_DB_USER_PW
-      - DB_NAME=state_checker
+      - DB_NAME=${DB_NAME:-state_checker}
       # Initial data seeding (only used on first startup if database is empty).
       - INIT_WEBSITES=${INIT_WEBSITES:-}
       - INIT_GOOGLE_DRIVE_FOLDERS=${INIT_GOOGLE_DRIVE_FOLDERS:-}
@@ -42,10 +42,9 @@
       timeout: 10s
       retries: 3
       start_period: 40s
+###PROXY_PORTS###
     deploy:
 ###PROXY_LABELS###
-###PROXY_PORTS###
       mode: replicated
       replicas: ${API_REPLICAS:-1}
     command: ["uvicorn", "main_api_startpoint:app", "--host", "0.0.0.0", "--port", "${API_PORT}"]
-

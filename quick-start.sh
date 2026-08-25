@@ -18,78 +18,70 @@ cd "$SCRIPT_DIR"
 source "${SETUP_DIR}/modules/docker_helpers.sh"
 source "${SETUP_DIR}/modules/ci-cd-github.sh"
 source "${SETUP_DIR}/modules/health-check.sh"
+source "${SETUP_DIR}/modules/deployment-preflight.sh"
 source "${SETUP_DIR}/modules/menu_handlers.sh"
 source "${SETUP_DIR}/modules/wizard.sh"
 source "${SETUP_DIR}/modules/config-builder.sh"
+
+_run_quick_start_smoke_test() {
+    # Validate Bash syntax plus Docker and Compose availability without mutation.
+    local script
+    while IFS= read -r -d '' script; do
+        bash -n "$script"
+    done < <(find "$SCRIPT_DIR" -type f -name '*.sh' -print0)
+
+    command -v docker >/dev/null 2>&1 || { echo "[ERROR] Docker is not available"; return 1; }
+    docker --version >/dev/null
+
+    if command -v docker-compose >/dev/null 2>&1; then
+        docker-compose --version >/dev/null
+    else
+        docker compose version >/dev/null
+    fi
+
+    bash "${SCRIPT_DIR}/tests/render-stack-smoke.sh"
+
+    echo "[OK] Smoke test completed (Bash syntax + Docker/Compose stack rendering)."
+}
+
+case "${1:-}" in
+    --smoke-test|-SmokeTest)
+        _run_quick_start_smoke_test
+        exit $?
+        ;;
+    --health)
+        load_env || { echo "[ERROR] .env file not found"; exit 1; }
+        check_stack_health
+        exit $?
+        ;;
+    "")
+        ;;
+    *)
+        echo "[ERROR] Unknown argument: $1"
+        echo "Usage: ./quick-start.sh [--smoke-test|--health]"
+        exit 2
+        ;;
+esac
 
 echo "🔍 Swarm Statechecker - Quick Start"
 echo "===================================="
 echo ""
 
-# Offer wizard-driven setup (recommended)
+# Keep all first-run configuration in the authoritative Bash wizard.
 if [ ! -f .setup-complete ]; then
     echo "⚠️  Setup wizard has not been completed (.setup-complete missing)"
-    echo "How do you want to set up configuration?"
-    echo "1) Edit .env + secrets.env (copy from templates)"
-    echo "2) Run guided setup wizard (recommended)"
-    echo ""
-    read -p "Your choice (1-2) [2]: " setup_mode
-    setup_mode="${setup_mode:-2}"
-
-    if [ "$setup_mode" = "1" ]; then
-        if [ -z "${WIZARD_EDITOR:-}" ]; then
-            wizard_choose_editor || exit 1
-        fi
-
-        if [ ! -f .env ] && [ -f setup/env-templates/.env.base.template ]; then
-            build_env_file "traefik" "$SCRIPT_DIR"
-        fi
-        if [ -f .env ]; then
-            wizard_edit_file "$(pwd)/.env" "$WIZARD_EDITOR"
-        fi
-
-        if [ ! -f secrets.env ] && [ -f setup/secrets.env.template ]; then
-            cp setup/secrets.env.template secrets.env
-        fi
-        if [ -f secrets.env ]; then
-            wizard_edit_file "$(pwd)/secrets.env" "$WIZARD_EDITOR"
-        fi
-
-        # Create secrets from secrets.env
-        if [ -f secrets.env ]; then
-            echo ""
-            create_secrets_from_env_file "secrets.env" "setup/secrets.env.template" || true
-        fi
-
-        # Mark setup complete
-        : > "$SCRIPT_DIR/.setup-complete"
-
-        # Ask to deploy
-        echo ""
-        read -p "Deploy the stack now? (Y/n): " deploy_now
-        if [[ ! "$deploy_now" =~ ^[Nn]$ ]]; then
-            echo ""
-            load_env || true
-            deploy_stack || true
-
-            if command -v check_deployment_health >/dev/null 2>&1; then
-                echo ""
-                echo "[INFO] Waiting 20s before the first health check (services may still be initializing)..."
-                check_deployment_health "${STACK_NAME:-statechecker}" "${PROXY_TYPE:-traefik}" 20 "30m" "200" || true
-            fi
-        fi
-
-        echo ""
-        echo "✅ Setup complete. You can now run ./quick-start.sh to manage the stack."
+    read -p "Run the setup wizard now? (Y/n): " run_wizard
+    if [[ "$run_wizard" =~ ^[Nn]$ ]]; then
+        echo "[INFO] Setup was not started."
         exit 0
-    else
-        if [ -f "$SETUP_DIR/setup-wizard.sh" ]; then
-            read -p "Run setup wizard now? (Y/n): " run_wizard
-            if [[ ! "$run_wizard" =~ ^[Nn]$ ]]; then
-                bash "$SETUP_DIR/setup-wizard.sh"
-                echo ""
-            fi
-        fi
+    fi
+
+    bash "$SETUP_DIR/setup-wizard.sh"
+    echo ""
+
+    if [ ! -f .setup-complete ]; then
+        echo "[ERROR] Setup did not complete."
+        exit 1
     fi
 fi
 

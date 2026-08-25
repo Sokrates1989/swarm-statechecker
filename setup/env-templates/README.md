@@ -18,6 +18,10 @@ The setup wizard combines these templates based on your selections:
 
 The resulting `.env` file is created in the project root.
 
+Application and web images use explicit version tags. `INIT_WEBSITES` and
+`INIT_GOOGLE_DRIVE_FOLDERS` are first-start seed values consumed only when the
+corresponding database tables are empty.
+
 ## SSL Termination Modes
 
 When using Traefik, you can choose between:

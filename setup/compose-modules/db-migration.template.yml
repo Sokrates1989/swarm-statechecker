@@ -3,8 +3,8 @@
   db-migration:
     image: mysql:8
     environment:
-      - MYSQL_DATABASE=state_checker
-      - MYSQL_USER=state_checker
+      - MYSQL_DATABASE=${DB_NAME:-state_checker}
+      - MYSQL_USER=${DB_USER:-state_checker}
       - MYSQL_HOST=${STACK_NAME}_db
     secrets:
       - STATECHECKER_SERVER_DB_USER_PW
@@ -16,4 +16,3 @@
     deploy:
       restart_policy:
         condition: none
-
