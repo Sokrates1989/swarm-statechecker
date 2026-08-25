@@ -69,6 +69,10 @@ cp setup/.env.template .env
 Use explicit image versions. The templates currently default to `3.0.1` and
 the deployment preflight rejects mutable `latest` tags.
 
+Website checks default to a five-minute interval. This keeps peer outage
+detection reasonably fast without reacting as aggressively to short network
+interruptions as a two-minute interval.
+
 <br>
 <br>
 

@@ -64,6 +64,22 @@ class DeploymentContractTests(unittest.TestCase):
             self.assertNotIn("IMAGE_VERSION=latest", content, template)
             self.assertNotIn("WEB_IMAGE_VERSION=latest", content, template)
 
+    def test_environment_templates_use_five_minute_website_checks(self) -> None:
+        """Keep peer monitoring responsive without using a two-minute interval."""
+
+        templates = (
+            REPOSITORY_ROOT / ".env.template",
+            SETUP_DIRECTORY / ".env.template",
+            SETUP_DIRECTORY / "env-templates" / ".env.base.template",
+        )
+        for template in templates:
+            content = template.read_text(encoding="utf-8")
+            self.assertRegex(
+                content,
+                r'(?m)^CHECK_WEBSITES_EVERY_X_MINUTES="?5"?$',
+                template,
+            )
+
     def test_guided_websites_use_the_database_seed_contract(self) -> None:
         """Write wizard selections to variables consumed during startup."""
 
