@@ -116,23 +116,23 @@ show_deployment_overview() {
     local stack_state
     stack_state="$(_get_stack_runtime_state "$stack_name")"
 
-    local stack_status image_icon
+    local stack_status image_status
     case "$stack_state" in
         running)
-            stack_status="✅ running"
-            image_icon="✅"
+            stack_status="$(_menu_colorize ok '[OK] running')"
+            image_status="$(_menu_colorize ok '[OK]')"
             ;;
         not-ready)
-            stack_status="⚠️ not ready"
-            image_icon="⚠️"
+            stack_status="$(_menu_colorize error '[ERROR] not ready')"
+            image_status="$(_menu_colorize error '[ERROR]')"
             ;;
         not-deployed)
-            stack_status="⏹️ not deployed"
-            image_icon="⏹️"
+            stack_status="$(_menu_colorize error '[OFF] not deployed')"
+            image_status="$(_menu_colorize off '[OFF]')"
             ;;
         *)
-            stack_status="❓ unavailable"
-            image_icon="❓"
+            stack_status="$(_menu_colorize error '[ERROR] unavailable')"
+            image_status="$(_menu_colorize warning '[UNKNOWN]')"
             ;;
     esac
 
@@ -146,8 +146,8 @@ show_deployment_overview() {
     [ -n "$pma_domain" ] && _box_line "PMA URL : ${pma_domain}"
     _box_line "DB Type  : ${db_type}"
     _box_line "Images   :"
-    _box_line_list "${image_icon} API/CHECK ${image_name}:${image_version}"
-    _box_line_list "${image_icon} Web ${web_image_name}:${web_image_version}"
+    _box_line_list "${image_status} API/CHECK ${image_name}:${image_version}"
+    _box_line_list "${image_status} Web ${web_image_name}:${web_image_version}"
     _box_rule
     echo ""
 }
@@ -1016,36 +1016,36 @@ _print_main_menu_text() {
     if declare -F _box_rule >/dev/null; then
         show_deployment_overview ".env"
     fi
-    echo "Deployment:"
+    echo "$(_menu_heading 'Deployment:')"
     echo "  1) Deploy stack"
     echo "  2) Remove stack"
     echo "  3) Show stack status"
     echo "  4) Health check"
     echo "  5) View service logs"
     echo ""
-    echo "Management:"
+    echo "$(_menu_heading 'Management:')"
     echo "  6) Update image version"
     echo "  7) Scale services"
     echo "  8) Toggle phpMyAdmin (enable/disable)"
     echo ""
-    echo "Setup:"
+    echo "$(_menu_heading 'Setup:')"
     echo "  9) Re-run setup wizard"
     echo ""
-    echo "Extras:"
-    echo "Secrets:"
+    echo "$(_menu_heading 'Extras:')"
+    echo "$(_menu_heading 'Secrets:')"
     echo "  10) Check required secrets"
     echo "  11) Create required secrets"
     echo "  12) Create secrets from secrets.env file"
     echo "  13) Create optional secrets (Telegram, Email, Google Drive)"
     echo "  14) List all secrets"
     echo ""
-    echo "CI/CD:"
+    echo "$(_menu_heading 'CI/CD:')"
     echo "  15) GitHub Actions CI/CD helper"
     echo ""
-    echo "Backup:"
+    echo "$(_menu_heading 'Backup:')"
     echo "  16) ${backup_label}"
     echo ""
-    echo "Keycloak:"
+    echo "$(_menu_heading 'Keycloak:')"
     echo "  17) Bootstrap Keycloak realm"
     echo "  18) Create Keycloak user"
     echo ""

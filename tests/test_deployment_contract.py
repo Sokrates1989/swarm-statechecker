@@ -23,6 +23,7 @@ DEPLOYMENT_PREFLIGHT = (
 )
 DOCKER_HELPERS = SETUP_DIRECTORY / "modules" / "docker_helpers.sh"
 HEALTH_CHECK = SETUP_DIRECTORY / "modules" / "health-check.sh"
+MENU_FORMATTING = SETUP_DIRECTORY / "modules" / "menu_formatting.sh"
 MENU_HANDLERS = SETUP_DIRECTORY / "modules" / "menu_handlers.sh"
 
 
@@ -243,12 +244,12 @@ class GeneratedStackTests(unittest.TestCase):
         '''
 
         cases = (
-            ("converged", "✅ running"),
-            ("incomplete", "⚠️ not ready"),
-            ("scaled-to-zero", "⚠️ not ready"),
-            ("failed-migration", "⚠️ not ready"),
-            ("not-deployed", "⏹️ not deployed"),
-            ("unavailable", "❓ unavailable"),
+            ("converged", "[OK] running"),
+            ("incomplete", "[ERROR] not ready"),
+            ("scaled-to-zero", "[ERROR] not ready"),
+            ("failed-migration", "[ERROR] not ready"),
+            ("not-deployed", "[OFF] not deployed"),
+            ("unavailable", "[ERROR] unavailable"),
         )
         for stack_mode, expected_status in cases:
             with self.subTest(stack_mode=stack_mode):
@@ -262,6 +263,27 @@ class GeneratedStackTests(unittest.TestCase):
                     f"Stack    : statechecker ({expected_status})",
                     process.stdout,
                 )
+
+    def test_menu_colors_match_the_shared_swarm_palette(self) -> None:
+        """Color explicit status labels without corrupting box width."""
+
+        process = run_bash(
+            r'''
+                source "$1"
+                _MENU_COLOR_ENABLED=true
+                printf 'ok=%s\n' "$(_menu_colorize ok '[OK] running')"
+                printf 'warning=%s\n' "$(_menu_colorize warning '[WARN] review')"
+                printf 'error=%s\n' "$(_menu_colorize error '[ERROR] not ready')"
+                colorized="$(_menu_colorize error '[ERROR] not ready')"
+                printf 'width=%s\n' "$(_calc_display_width "$colorized")"
+            ''',
+            MENU_FORMATTING,
+        )
+
+        self.assertIn("ok=\x1b[32m[OK] running\x1b[0m", process.stdout)
+        self.assertIn("warning=\x1b[33m[WARN] review\x1b[0m", process.stdout)
+        self.assertIn("error=\x1b[31m[ERROR] not ready\x1b[0m", process.stdout)
+        self.assertIn("width=17", process.stdout)
 
     def test_no_proxy_stack_contains_required_contracts(self) -> None:
         """Generate a complete stack without leaving template placeholders."""
