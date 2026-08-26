@@ -43,9 +43,6 @@ The stack uses `${IMAGE_NAME}:${IMAGE_VERSION}` (from `.env`) for both `api` and
 ./quick-start.sh
 ```
 
-On Windows, `quick-start.ps1` is a thin WSL/Bash launcher for the same CLI. It
-does not maintain a separate PowerShell setup implementation.
-
 The deployment overview checks the current `main` checkout against `origin`.
 Press `r` to refresh that repository state or `u` to apply a clean,
 fast-forward-only update and restart the menu. Self-update is blocked when the
@@ -175,4 +172,4 @@ To restore from a SQL backup:
 
 ✅ `api` and `check` share the same application image.
 
-✅ Bash is the authoritative CLI; PowerShell delegates to it.
+✅ `quick-start.sh` is the authoritative Linux deployment CLI.

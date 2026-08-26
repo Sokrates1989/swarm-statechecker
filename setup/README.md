@@ -26,9 +26,9 @@ The authoritative Bash setup wizard helps you:
 ```
 setup/
 ├── .env.template          # Base environment template
-├── modules/               # Helper scripts (bash + PowerShell)
-│   ├── docker_helpers.sh/.ps1
-│   └── menu_handlers.sh/.ps1
+├── modules/               # Bash helper scripts
+│   ├── docker_helpers.sh
+│   └── menu_handlers.sh
 └── README.md
 ```
 
@@ -39,15 +39,8 @@ setup/
 Run the setup wizard from the repository root:
 
 ```bash
-# Linux/Mac
 ./quick-start.sh
-
-# Windows (PowerShell)
-.\quick-start.ps1
 ```
-
-The PowerShell entry point delegates to `quick-start.sh` through WSL/Bash so
-both platforms use the same menus, validation, and deployment behavior.
 
 ## 📝 Configuration
 
@@ -101,6 +94,6 @@ MySQL only runs init SQL when `${DATA_ROOT}/db_data` is empty.
 
 # 🚀 Summary
 
-✅ Run the setup wizard from the repo root (`quick-start.ps1` / `quick-start.sh`).
+✅ Run the setup wizard from the repo root with `./quick-start.sh`.
 
 ✅ Required secrets must exist before deploying.

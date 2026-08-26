@@ -137,19 +137,16 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertEqual(labels.count("traefik.swarm.network=${TRAEFIK_NETWORK}"), 6)
         self.assertNotIn("traefik.docker.network", labels)
 
-    def test_powershell_delegates_to_the_canonical_bash_entrypoint(self) -> None:
-        """Prevent a second PowerShell setup implementation from drifting."""
+    def test_linux_cli_has_no_powershell_entrypoint_sibling(self) -> None:
+        """Keep shell tab completion unambiguous on deployment hosts."""
 
         powershell_files = sorted(
             path.relative_to(REPOSITORY_ROOT)
             for path in REPOSITORY_ROOT.rglob("*.ps1")
         )
-        wrapper = (REPOSITORY_ROOT / "quick-start.ps1").read_text(encoding="utf-8")
 
-        self.assertEqual(powershell_files, [Path("quick-start.ps1")])
-        self.assertIn('"./quick-start.sh"', wrapper)
-        self.assertIn("$bashCommand.Source", wrapper)
-        self.assertNotIn("Import-Module", wrapper)
+        self.assertEqual(powershell_files, [])
+        self.assertTrue((REPOSITORY_ROOT / "quick-start.sh").is_file())
 
     def test_deploy_path_is_preflighted_and_always_rendered(self) -> None:
         """Validate inputs before secret creation and reject raw stack deploys."""

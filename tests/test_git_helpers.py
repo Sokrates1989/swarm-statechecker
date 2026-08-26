@@ -218,6 +218,14 @@ class GitHelperTests(unittest.TestCase):
         self.assertIn("unexpected-origin", helper)
         self.assertIn("dirty", helper)
 
+    def test_operator_environment_backups_are_ignored(self) -> None:
+        """Keep expected private backup files from blocking self-update."""
+
+        gitignore = (REPOSITORY_ROOT / ".gitignore").read_text(encoding="utf-8")
+
+        self.assertIn(".env.old", gitignore)
+        self.assertIn(".env.legacy-*", gitignore)
+
 
 if __name__ == "__main__":
     unittest.main()

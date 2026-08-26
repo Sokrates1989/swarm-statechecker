@@ -7,6 +7,10 @@ config.txt
 # Ignore the Environment (.env) file, that contains passwords and connection details.
 .env
 
+# Local environment backups retained by deployment operators.
+.env.old
+.env.legacy-*
+
 # Optional secrets file (contains secret values/paths)
 secrets.env
 
