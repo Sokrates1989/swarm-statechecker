@@ -46,6 +46,12 @@ The stack uses `${IMAGE_NAME}:${IMAGE_VERSION}` (from `.env`) for both `api` and
 On Windows, `quick-start.ps1` is a thin WSL/Bash launcher for the same CLI. It
 does not maintain a separate PowerShell setup implementation.
 
+The deployment overview checks the current `main` checkout against `origin`.
+Press `r` to refresh that repository state or `u` to apply a clean,
+fast-forward-only update and restart the menu. Self-update is blocked when the
+checkout has local changes, is ahead/diverged, uses an unexpected origin or
+branch, or cannot verify its upstream safely.
+
 <br>
 <br>
 

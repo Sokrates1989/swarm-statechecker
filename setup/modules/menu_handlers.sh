@@ -22,6 +22,16 @@ if [ -f "${MENU_HANDLERS_DIR}/menu_formatting.sh" ]; then
     source "${MENU_HANDLERS_DIR}/menu_formatting.sh"
 fi
 
+# Source safe repository status and self-update helpers. The former repository
+# name remains accepted because existing deployments can still use its GitHub
+# redirect as origin.
+if [ -f "${MENU_HANDLERS_DIR}/git_helpers.sh" ]; then
+    GIT_EXPECTED_REPOSITORIES="${GIT_EXPECTED_REPOSITORIES:-sokrates1989/swarm-statechecker sokrates1989/docker-statechecker-server}"
+    GIT_EXPECTED_BRANCH="${GIT_EXPECTED_BRANCH:-main}"
+    # shellcheck source=/dev/null
+    source "${MENU_HANDLERS_DIR}/git_helpers.sh"
+fi
+
 if [ -f "${MENU_HANDLERS_DIR}/config-builder.sh" ]; then
     # shellcheck source=/dev/null
     source "${MENU_HANDLERS_DIR}/config-builder.sh"
@@ -148,6 +158,9 @@ show_deployment_overview() {
     _box_line "Images   :"
     _box_line_list "${image_status} API/CHECK ${image_name}:${image_version}"
     _box_line_list "${image_status} Web ${web_image_name}:${web_image_version}"
+    if declare -F show_git_status_line >/dev/null 2>&1; then
+        _box_line "$(show_git_status_line)"
+    fi
     _box_rule
     echo ""
 }
@@ -1049,6 +1062,14 @@ _print_main_menu_text() {
     echo "  17) Bootstrap Keycloak realm"
     echo "  18) Create Keycloak user"
     echo ""
+    echo "$(_menu_heading 'Repository:')"
+    if [ "${_GIT_UPDATE_STATUS:-}" = "behind" ]; then
+        echo "  $(_menu_colorize warning "u) Update deployment repository (${_GIT_UPDATE_BEHIND_COUNT} update(s) available)")"
+    else
+        echo "  u) Check for and apply repository update"
+    fi
+    echo "  r) Refresh repository update state"
+    echo ""
     echo "  ${menu_exit}) Exit"
     echo ""
 }
@@ -1121,6 +1142,8 @@ _handle_main_menu_choice() {
                 echo "❌ menu_keycloak.sh not found"
             fi
             ;;
+        r|R) refresh_git_update_status ;;
+        u|U) handle_git_pull ;;
         ${menu_exit}) echo "👋 Goodbye!"; exit 0 ;;
         *) echo "❌ Invalid selection" ;;
     esac
@@ -1131,10 +1154,14 @@ show_main_menu() {
      # Main interactive menu loop.
      local choice
      local MENU_EXIT=19
+
+     if declare -F check_git_updates >/dev/null 2>&1; then
+        check_git_updates
+     fi
      
      while true; do
         _print_main_menu_text "$MENU_EXIT"
-        read_prompt "Your choice (1-${MENU_EXIT}): " choice
+        read_prompt "Your choice (1-${MENU_EXIT}, r/u): " choice
         _handle_main_menu_choice "$choice" "$MENU_EXIT" "$1"
      done
  }
