@@ -680,9 +680,16 @@ deploy_stack() {
         docker stack services "$stack_name"
 
         if command -v check_deployment_health >/dev/null 2>&1; then
+            local readiness_attempts="${POST_DEPLOY_HEALTH_MAX_ATTEMPTS:-10}"
+            local readiness_interval="${POST_DEPLOY_HEALTH_RETRY_SECONDS:-10}"
             echo ""
-            echo "[INFO] Waiting 20s before the first health check (services may still be initializing)..."
-            check_deployment_health "$stack_name" "${PROXY_TYPE:-traefik}" 20 "30m" "200" || true
+            printf '[INFO] Waiting for deployment readiness (%s attempts, %ss interval)...\n' \
+                "$readiness_attempts" "$readiness_interval"
+            wait_for_deployment_readiness \
+                "$stack_name" "${PROXY_TYPE:-traefik}" \
+                "$readiness_attempts" "$readiness_interval" || true
+            check_deployment_health \
+                "$stack_name" "${PROXY_TYPE:-traefik}" 0 "30m" "200" || true
         fi
     else
         echo "❌ Failed to deploy stack"

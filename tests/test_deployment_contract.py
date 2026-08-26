@@ -191,6 +191,25 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn('if [ "$HEALTH_FAILURES" -ne 0 ]', health)
         self.assertIn("return 1", health)
 
+    def test_deploy_waits_for_readiness_before_one_final_health_check(self) -> None:
+        """Poll startup convergence instead of issuing an early verdict."""
+
+        menu = (SETUP_DIRECTORY / "modules" / "menu_handlers.sh").read_text(
+            encoding="utf-8"
+        )
+        deploy = menu.split("deploy_stack() {", 1)[1].split(
+            "# Helper: Wait for stack", 1
+        )[0]
+
+        self.assertIn("POST_DEPLOY_HEALTH_MAX_ATTEMPTS:-10", deploy)
+        self.assertIn("POST_DEPLOY_HEALTH_RETRY_SECONDS:-10", deploy)
+        self.assertIn("wait_for_deployment_readiness", deploy)
+        self.assertIn(
+            '"$stack_name" "${PROXY_TYPE:-traefik}" 0 "30m" "200"',
+            deploy,
+        )
+        self.assertNotIn("Waiting 20s", deploy)
+
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "POSIX Bash required")
 class GeneratedStackTests(unittest.TestCase):
@@ -398,6 +417,98 @@ class GeneratedStackTests(unittest.TestCase):
         self.assertIn("endpoint is unreachable or unhealthy", failed.stderr)
         self.assertEqual(healthy.returncode, 0, healthy.stderr)
         self.assertIn("Deployment is converged", healthy.stdout)
+
+    def test_readiness_wait_stops_after_successful_attempt(self) -> None:
+        """Stop polling as soon as startup becomes fully ready."""
+
+        process = run_bash(
+            r'''
+                source "$1"
+                attempts=0
+                sleep() { :; }
+                _deployment_ready_for_final_health_check() {
+                    attempts=$((attempts + 1))
+                    [ "$attempts" -ge 3 ]
+                }
+                wait_for_deployment_readiness statechecker traefik 5 10
+                printf 'attempts=%s\n' "$attempts"
+            ''',
+            HEALTH_CHECK,
+        )
+
+        self.assertIn("Readiness attempt 3/5", process.stdout)
+        self.assertIn("Deployment became ready on attempt 3/5", process.stdout)
+        self.assertIn("attempts=3", process.stdout)
+
+    def test_readiness_requires_swarm_and_external_endpoints(self) -> None:
+        """Do not finalize while either Swarm or public HTTPS is unavailable."""
+
+        harness = r'''
+            source "$1"
+            source "$2"
+            RUNTIME_STATE="$3"
+            CURL_STATE="$4"
+            _get_stack_runtime_state() { printf '%s\n' "$RUNTIME_STATE"; }
+            curl() { [ "$CURL_STATE" = "success" ]; }
+            API_DOMAIN=api.statechecker.example.test
+            WEB_DOMAIN=statechecker.example.test
+            _deployment_ready_for_final_health_check statechecker traefik
+        '''
+
+        services_starting = run_bash(
+            harness,
+            DOCKER_HELPERS,
+            HEALTH_CHECK,
+            "not-ready",
+            "success",
+            check=False,
+        )
+        tls_starting = run_bash(
+            harness,
+            DOCKER_HELPERS,
+            HEALTH_CHECK,
+            "running",
+            "failure",
+            check=False,
+        )
+        ready = run_bash(
+            harness,
+            DOCKER_HELPERS,
+            HEALTH_CHECK,
+            "running",
+            "success",
+            check=False,
+        )
+
+        self.assertNotEqual(services_starting.returncode, 0)
+        self.assertNotEqual(tls_starting.returncode, 0)
+        self.assertEqual(ready.returncode, 0)
+
+    def test_readiness_wait_is_bounded(self) -> None:
+        """Finish with a warning when readiness never converges."""
+
+        process = run_bash(
+            r'''
+                source "$1"
+                attempts=0
+                sleep() { :; }
+                _deployment_ready_for_final_health_check() {
+                    attempts=$((attempts + 1))
+                    return 1
+                }
+                wait_for_deployment_readiness statechecker traefik 3 10
+                status=$?
+                printf 'attempts=%s\n' "$attempts"
+                exit "$status"
+            ''',
+            HEALTH_CHECK,
+            check=False,
+        )
+
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn("Readiness attempt 3/3", process.stdout)
+        self.assertIn("did not become ready after 3 attempts", process.stdout)
+        self.assertIn("attempts=3", process.stdout)
 
 
 if __name__ == "__main__":

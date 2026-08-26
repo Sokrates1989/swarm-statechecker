@@ -50,7 +50,7 @@ _check_service_convergence() {
     local service_name replicas service_suffix current desired
     while IFS='|' read -r service_name replicas; do
         [ -z "$service_name" ] && continue
-        service_suffix="${service_name#${stack_name}_}"
+        service_suffix="${service_name#"${stack_name}"_}"
 
         case "$service_suffix" in
             api) api_found=1 ;;
@@ -141,6 +141,88 @@ _check_external_endpoints() {
             _check_http_endpoint "PMA" "https://${PHPMYADMIN_DOMAIN}/"
         fi
     fi
+}
+
+_deployment_services_ready() {
+    # Return success only when the shared Swarm runtime state is fully converged.
+    local stack_name="$1"
+
+    declare -F _get_stack_runtime_state >/dev/null 2>&1 || return 1
+    [ "$(_get_stack_runtime_state "$stack_name")" = "running" ]
+}
+
+_http_endpoint_ready() {
+    # Probe one endpoint without printing transient startup failures.
+    local url="$1"
+    local timeout_seconds="${HEALTH_HTTP_TIMEOUT_SECONDS:-10}"
+
+    curl --fail --silent --location --max-time "$timeout_seconds" \
+        --output /dev/null "$url" >/dev/null 2>&1
+}
+
+_external_endpoints_ready() {
+    # Return success only when every enabled operator-facing endpoint responds.
+    local proxy_type="$1"
+
+    command -v curl >/dev/null 2>&1 || return 1
+
+    if [ "$proxy_type" = "none" ]; then
+        _http_endpoint_ready "http://127.0.0.1:${API_PORT:-8787}/health" || return 1
+        _http_endpoint_ready "http://127.0.0.1:${WEB_PORT:-8080}/" || return 1
+        if [ "${PHPMYADMIN_REPLICAS:-0}" != "0" ]; then
+            _http_endpoint_ready "http://127.0.0.1:${PHPMYADMIN_PORT:-8081}/" || return 1
+        fi
+    else
+        [ -n "${API_DOMAIN:-}" ] || return 1
+        [ -n "${WEB_DOMAIN:-}" ] || return 1
+        _http_endpoint_ready "https://${API_DOMAIN}/health" || return 1
+        _http_endpoint_ready "https://${WEB_DOMAIN}/" || return 1
+        if [ "${PHPMYADMIN_REPLICAS:-0}" != "0" ]; then
+            [ -n "${PHPMYADMIN_DOMAIN:-}" ] || return 1
+            _http_endpoint_ready "https://${PHPMYADMIN_DOMAIN}/" || return 1
+        fi
+    fi
+}
+
+_deployment_ready_for_final_health_check() {
+    # Keep polling quiet until both Swarm and public endpoints are ready.
+    local stack_name="$1"
+    local proxy_type="$2"
+
+    _deployment_services_ready "$stack_name" || return 1
+    _external_endpoints_ready "$proxy_type"
+}
+
+wait_for_deployment_readiness() {
+    # Poll bounded startup readiness before printing one detailed health verdict.
+    local stack_name="$1"
+    local proxy_type="$2"
+    local max_attempts="${3:-10}"
+    local retry_seconds="${4:-10}"
+    local attempt
+
+    [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] || max_attempts=10
+    [[ "$retry_seconds" =~ ^[1-9][0-9]*$ ]] || retry_seconds=10
+
+    for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+        printf '[WAIT] Readiness attempt %d/%d in %ss...\n' \
+            "$attempt" "$max_attempts" "$retry_seconds"
+        sleep "$retry_seconds"
+
+        if _deployment_ready_for_final_health_check "$stack_name" "$proxy_type"; then
+            printf '[OK] Deployment became ready on attempt %d/%d.\n' \
+                "$attempt" "$max_attempts"
+            return 0
+        fi
+
+        if [ "$attempt" -lt "$max_attempts" ]; then
+            echo "[WAIT] Deployment is not ready yet; retrying..."
+        fi
+    done
+
+    printf '[WARN] Deployment did not become ready after %d attempts; running final diagnostics.\n' \
+        "$max_attempts"
+    return 1
 }
 
 check_deployment_health() {
