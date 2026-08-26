@@ -171,6 +171,98 @@ check_secret_exists() {
     fi
 }
 
+# _get_stack_runtime_state
+# Classifies a stack from its deployed services instead of its name alone.
+#
+# Arguments:
+# - $1: stack name
+#
+# Output:
+# - running: every persistent service is converged and the migration completed
+# - not-ready: the stack exists but required services are missing or incomplete
+# - not-deployed: no stack with the requested name exists
+# - unavailable: Docker could not report the stack or service state
+_get_stack_runtime_state() {
+    local stack_name="$1"
+    local stack_names service_rows
+
+    if ! stack_names=$(docker stack ls --format '{{.Name}}' 2>/dev/null); then
+        printf '%s\n' "unavailable"
+        return 0
+    fi
+
+    if ! grep -Fxq -- "$stack_name" <<< "$stack_names"; then
+        printf '%s\n' "not-deployed"
+        return 0
+    fi
+
+    if ! service_rows=$(docker stack services "$stack_name" --format '{{.Name}}|{{.Replicas}}' 2>/dev/null); then
+        printf '%s\n' "unavailable"
+        return 0
+    fi
+
+    if [ -z "$service_rows" ]; then
+        printf '%s\n' "not-ready"
+        return 0
+    fi
+
+    local api_found=0 check_found=0 db_found=0 web_found=0 migration_found=0
+    local not_ready=0
+    local service_name replicas service_suffix current desired required_service
+    while IFS='|' read -r service_name replicas; do
+        [ -z "$service_name" ] && continue
+
+        service_suffix="${service_name#"${stack_name}"_}"
+        required_service=0
+        case "$service_suffix" in
+            api) api_found=1; required_service=1 ;;
+            check) check_found=1; required_service=1 ;;
+            db) db_found=1; required_service=1 ;;
+            web) web_found=1; required_service=1 ;;
+            db-migration) migration_found=1; continue ;;
+        esac
+
+        if [[ "$replicas" =~ ^[[:space:]]*([0-9]+)[[:space:]]*/[[:space:]]*([0-9]+) ]]; then
+            current="${BASH_REMATCH[1]}"
+            desired="${BASH_REMATCH[2]}"
+        else
+            not_ready=1
+            continue
+        fi
+
+        if [ "$current" -ne "$desired" ]; then
+            not_ready=1
+        fi
+        if [ "$required_service" -eq 1 ] && [ "$desired" -eq 0 ]; then
+            not_ready=1
+        fi
+    done <<< "$service_rows"
+
+    if [ "$api_found" -ne 1 ] || [ "$check_found" -ne 1 ] || \
+       [ "$db_found" -ne 1 ] || [ "$web_found" -ne 1 ] || \
+       [ "$migration_found" -ne 1 ]; then
+        not_ready=1
+    fi
+
+    if [ "$migration_found" -eq 1 ]; then
+        local migration_rows migration_state
+        if ! migration_rows=$(docker service ps "${stack_name}_db-migration" --no-trunc --format '{{.CurrentState}}' 2>/dev/null); then
+            printf '%s\n' "unavailable"
+            return 0
+        fi
+        migration_state="${migration_rows%%$'\n'*}"
+        if [[ ! "$migration_state" =~ ^Complete([[:space:]]|$) ]]; then
+            not_ready=1
+        fi
+    fi
+
+    if [ "$not_ready" -eq 0 ]; then
+        printf '%s\n' "running"
+    else
+        printf '%s\n' "not-ready"
+    fi
+}
+
 _get_stack_name_for_secret_ops() {
     # _get_stack_name_for_secret_ops
     # Determines the stack name to use for secret recreation safety checks.

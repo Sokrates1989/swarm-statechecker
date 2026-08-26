@@ -61,16 +61,6 @@ _env_value_or_default() {
     echo "${line#*=}" | tr -d '"' | tr -d '\r'
 }
 
-# _stack_running
-# Checks if a Docker stack is running.
-#
-# Arguments:
-# - $1: stack name
-_stack_running() {
-    local stack_name="$1"
-    docker stack ls --format '{{.Name}}' 2>/dev/null | grep -qx "${stack_name}"
-}
-
 # _is_truthy
 # Returns 0 when the provided value should be treated as true.
 #
@@ -123,19 +113,28 @@ show_deployment_overview() {
     local web_image_version
     web_image_version="$(_env_value_or_default "$env_file" "WEB_IMAGE_VERSION" "3.0.1")"
 
-    local stack_state="not running"
-    if _stack_running "$stack_name"; then
-        stack_state="running"
-    fi
+    local stack_state
+    stack_state="$(_get_stack_runtime_state "$stack_name")"
 
-    local ok_icon="✅"
-    local off_icon="⏹️"
-    local stack_status="${off_icon} not running"
-    local image_icon="${off_icon}"
-    if [ "$stack_state" = "running" ]; then
-        stack_status="${ok_icon} running"
-        image_icon="${ok_icon}"
-    fi
+    local stack_status image_icon
+    case "$stack_state" in
+        running)
+            stack_status="✅ running"
+            image_icon="✅"
+            ;;
+        not-ready)
+            stack_status="⚠️ not ready"
+            image_icon="⚠️"
+            ;;
+        not-deployed)
+            stack_status="⏹️ not deployed"
+            image_icon="⏹️"
+            ;;
+        *)
+            stack_status="❓ unavailable"
+            image_icon="❓"
+            ;;
+    esac
 
     _box_rule
     _box_line "Deployment Overview"

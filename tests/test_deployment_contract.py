@@ -21,7 +21,9 @@ CONFIG_BUILDER = SETUP_DIRECTORY / "modules" / "config-builder.sh"
 DEPLOYMENT_PREFLIGHT = (
     SETUP_DIRECTORY / "modules" / "deployment-preflight.sh"
 )
+DOCKER_HELPERS = SETUP_DIRECTORY / "modules" / "docker_helpers.sh"
 HEALTH_CHECK = SETUP_DIRECTORY / "modules" / "health-check.sh"
+MENU_HANDLERS = SETUP_DIRECTORY / "modules" / "menu_handlers.sh"
 
 
 def run_bash(
@@ -195,6 +197,71 @@ class DeploymentContractTests(unittest.TestCase):
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "POSIX Bash required")
 class GeneratedStackTests(unittest.TestCase):
     """Exercise stack generation and static preflight in isolation."""
+
+    def test_deployment_overview_uses_converged_service_state(self) -> None:
+        """Never label a named but incomplete Swarm stack as running."""
+
+        harness = r'''
+            source "$1"
+            source "$2"
+            STACK_MODE="$3"
+            docker() {
+                if [ "$1 $2" = "stack ls" ]; then
+                    [ "$STACK_MODE" != "unavailable" ] || return 1
+                    if [ "$STACK_MODE" = "not-deployed" ]; then
+                        printf '%s\n' 'another-stack'
+                    else
+                        printf '%s\n' 'statechecker'
+                    fi
+                    return 0
+                fi
+                if [ "$1 $2" = "stack services" ]; then
+                    printf '%s\n' \
+                        "statechecker_api|${API_REPLICAS:-1/1}" \
+                        'statechecker_check|1/1' \
+                        'statechecker_db|1/1' \
+                        'statechecker_db-migration|0/1' \
+                        'statechecker_web|1/1'
+                    return 0
+                fi
+                if [ "$1 $2" = "service ps" ]; then
+                    if [ "$STACK_MODE" = "failed-migration" ]; then
+                        printf '%s\n' 'Failed 1 second ago'
+                    else
+                        printf '%s\n' 'Complete 1 second ago'
+                    fi
+                    return 0
+                fi
+                return 1
+            }
+            if [ "$STACK_MODE" = "incomplete" ]; then
+                API_REPLICAS='0/1'
+            elif [ "$STACK_MODE" = "scaled-to-zero" ]; then
+                API_REPLICAS='0/0'
+            fi
+            show_deployment_overview /nonexistent/statechecker.env
+        '''
+
+        cases = (
+            ("converged", "✅ running"),
+            ("incomplete", "⚠️ not ready"),
+            ("scaled-to-zero", "⚠️ not ready"),
+            ("failed-migration", "⚠️ not ready"),
+            ("not-deployed", "⏹️ not deployed"),
+            ("unavailable", "❓ unavailable"),
+        )
+        for stack_mode, expected_status in cases:
+            with self.subTest(stack_mode=stack_mode):
+                process = run_bash(
+                    harness,
+                    DOCKER_HELPERS,
+                    MENU_HANDLERS,
+                    stack_mode,
+                )
+                self.assertIn(
+                    f"Stack    : statechecker ({expected_status})",
+                    process.stdout,
+                )
 
     def test_no_proxy_stack_contains_required_contracts(self) -> None:
         """Generate a complete stack without leaving template placeholders."""
