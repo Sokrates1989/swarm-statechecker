@@ -49,6 +49,15 @@ fast-forward-only update and restart the menu. Self-update is blocked when the
 checkout has local changes, is ahead/diverged, uses an unexpected origin or
 branch, or cannot verify its upstream safely.
 
+Management option `6` updates deployed image versions. Choose API/CHECK, Web,
+or **both**. The paired choice asks for one explicit tag, checks that all three
+Swarm services exist, pulls both images before changing a service, then updates
+API, CHECK, and Web. It saves both `.env` version keys only after all three
+service-update commands succeed and runs the deployment readiness and health
+checks. A failure during service updates can leave a partial rollout; inspect
+the reported service state before retrying. The menu rejects `latest` for the
+paired update. This option uses published images; it does not build or push.
+
 <br>
 <br>
 

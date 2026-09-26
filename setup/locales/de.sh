@@ -1,0 +1,33 @@
+#!/bin/bash
+# Deutsche Texte für das Image-Update-Menü. Schlüssel mit en.sh abgleichen.
+# Eingebunden durch menu_image_i18n.sh.
+# shellcheck disable=SC2034
+declare -gA STATECHECKER_IMAGE_MENU_DE=(
+    [title]='[UPDATE] Image-Version aktualisieren'
+    [api_choice]='API/CHECK-Image (%s:%s)'
+    [web_choice]='WEB-Image (%s:%s)'
+    [both_choice]='API/CHECK- und WEB-Images (eine Version)'
+    [back]='Zurück'
+    [choice_prompt]='Auswahl (1-4): '
+    [api_prompt]='Neues API/CHECK-Image-Tag [%s]: '
+    [web_prompt]='Neues WEB-Image-Tag [%s]: '
+    [both_prompt]='Version für beide Images [%s]: '
+    [both_prompt_required]='Version für beide Images (aktuelle Tags unterscheiden sich): '
+    [tag_required]='[ERROR] Bitte eine Version eingeben, da sich die aktuellen Image-Tags unterscheiden.'
+    [invalid_tag]='[ERROR] Bitte ein festes Docker-Image-Tag statt latest verwenden: %s'
+    [missing_env]='[ERROR] .env fehlt; die Image-Versionen wurden nicht geändert.'
+    [missing_images]='[ERROR] IMAGE_NAME und WEB_IMAGE_NAME sind erforderlich.'
+    [already_current]='[INFO] Beide Images verwenden bereits %s; kein Update nötig.'
+    [missing_service]='[ERROR] Erforderlicher Swarm-Dienst fehlt: %s'
+    [pulling]='[INFO] Lade %s'
+    [pull_failed]='[ERROR] %s konnte nicht geladen werden; kein Dienst wurde geändert.'
+    [confirm]='API, CHECK und WEB auf %s aktualisieren? (j/N): '
+    [cancelled]='[INFO] Image-Update abgebrochen.'
+    [updating]='[UPDATE] Aktualisiere %s auf %s'
+    [partial_failure]='[ERROR] Update von %s fehlgeschlagen. Frühere Dienste könnten bereits aktualisiert sein; .env blieb unverändert. Bitte Dienststatus vor erneutem Versuch prüfen.'
+    [env_failure]='[ERROR] Dienste wurden aktualisiert, aber .env konnte nicht gespeichert werden. Bitte Deployment vor erneutem Ausrollen prüfen.'
+    [saved]='[OK] API/CHECK- und WEB-Image-Version als %s gespeichert.'
+    [checking]='[INFO] Warte auf aktualisierte Dienste und öffentliche Endpunkte ...'
+    [unhealthy]='[ERROR] Image-Update abgeschlossen, aber das Deployment ist nicht gesund. Bitte Option 4 und Dienst-Logs prüfen.'
+    [health_unavailable]='[WARN] Gesundheitsprüfung nicht verfügbar; Deployment mit Option 4 prüfen.'
+)

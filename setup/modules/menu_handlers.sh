@@ -22,6 +22,10 @@ if [ -f "${MENU_HANDLERS_DIR}/menu_formatting.sh" ]; then
     source "${MENU_HANDLERS_DIR}/menu_formatting.sh"
 fi
 
+# Source English/German copy for the image-update menu.
+# shellcheck source=/dev/null
+source "${MENU_HANDLERS_DIR}/menu_image_i18n.sh"
+
 # Source safe repository status and self-update helpers. The former repository
 # name remains accepted because existing deployments can still use its GitHub
 # redirect as origin.
@@ -258,30 +262,144 @@ _update_image_service() {
     echo "✅ Update initiated. Monitor with: docker stack services $stack_name"
 }
 
+# _update_both_images
+# Update API, checker, and web to one verified tag. Persist both version keys
+# only after every service update command succeeds. A failed rollout may be
+# partial; the function reports that state rather than claiming success.
+# Arguments: $1 shared explicit image tag.
+# The menu's echo wrapper applies semantic terminal colors to translated text.
+# shellcheck disable=SC2005
+_update_both_images() {
+    local tag="$1"
+    local stack_name="${STACK_NAME:-statechecker}"
+    local api_image="${IMAGE_NAME:-}"
+    local web_image="${WEB_IMAGE_NAME:-}"
+    local service image candidate
+
+    if [[ ! "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || [ "$tag" = "latest" ]; then
+        echo "$(menu_image_message invalid_tag "$tag")"
+        return 1
+    fi
+    if [ ! -f .env ]; then
+        echo "$(menu_image_message missing_env)"
+        return 1
+    fi
+    if [ -z "$api_image" ] || [ -z "$web_image" ]; then
+        echo "$(menu_image_message missing_images)"
+        return 1
+    fi
+    if [ "${IMAGE_VERSION:-}" = "$tag" ] && [ "${WEB_IMAGE_VERSION:-}" = "$tag" ]; then
+        echo "$(menu_image_message already_current "$tag")"
+        return 0
+    fi
+
+    for service in api check web; do
+        if ! docker service inspect "${stack_name}_${service}" >/dev/null 2>&1; then
+            echo "$(menu_image_message missing_service "${stack_name}_${service}")"
+            return 1
+        fi
+    done
+
+    for image in "${api_image}:${tag}" "${web_image}:${tag}"; do
+        echo "$(menu_image_message pulling "$image")"
+        if ! docker pull "$image"; then
+            echo "$(menu_image_message pull_failed "$image")"
+            return 1
+        fi
+    done
+
+    for service in api check web; do
+        image="${api_image}:${tag}"
+        [ "$service" = web ] && image="${web_image}:${tag}"
+        echo "$(menu_image_message updating "${stack_name}_${service}" "$image")"
+        if ! docker service update --detach=false --image "$image" "${stack_name}_${service}"; then
+            echo "$(menu_image_message partial_failure "${stack_name}_${service}")"
+            return 1
+        fi
+    done
+
+    candidate=$(mktemp .env.image-update.XXXXXX) || {
+        echo "$(menu_image_message env_failure)"
+        return 1
+    }
+    if ! cp -p -- .env "$candidate" ||
+        ! update_env_values "$candidate" IMAGE_VERSION "$tag" ||
+        ! update_env_values "$candidate" WEB_IMAGE_VERSION "$tag" ||
+        ! mv -f -- "$candidate" .env; then
+        rm -f -- "$candidate"
+        echo "$(menu_image_message env_failure)"
+        return 1
+    fi
+    IMAGE_VERSION="$tag"
+    WEB_IMAGE_VERSION="$tag"
+    echo "$(menu_image_message saved "$tag")"
+
+    if declare -F wait_for_deployment_readiness >/dev/null 2>&1 &&
+        declare -F check_deployment_health >/dev/null 2>&1; then
+        echo "$(menu_image_message checking)"
+        wait_for_deployment_readiness "$stack_name" "${PROXY_TYPE:-traefik}" \
+            "${POST_DEPLOY_HEALTH_MAX_ATTEMPTS:-10}" \
+            "${POST_DEPLOY_HEALTH_RETRY_SECONDS:-10}" || true
+        if ! check_deployment_health "$stack_name" "${PROXY_TYPE:-traefik}" 0 "30m" "200"; then
+            echo "$(menu_image_message unhealthy)"
+            return 1
+        fi
+    else
+        echo "$(menu_image_message health_unavailable)"
+    fi
+}
+
+# The menu's echo wrapper applies semantic terminal colors to translated text.
+# shellcheck disable=SC2005
 update_images_menu() {
     # update_images_menu
-    # Updates Swarm service images for api/check and/or web.
+    # Updates Swarm service images for api/check, web, or both at one tag.
     load_env
-    
+
+    local img_choice new_tag current_tag api_tag web_tag confirm_update
     echo ""
-    echo "[UPDATE] Update Image Version"
+    echo "$(menu_image_message title)"
     echo ""
-    echo "1) API/CHECK image (${IMAGE_NAME:-}:${IMAGE_VERSION:-})"
-    echo "2) WEB image (${WEB_IMAGE_NAME:-}:${WEB_IMAGE_VERSION:-})"
-    echo "3) Back"
+    echo "1) $(menu_image_message api_choice "${IMAGE_NAME:-}" "${IMAGE_VERSION:-}")"
+    echo "2) $(menu_image_message web_choice "${WEB_IMAGE_NAME:-}" "${WEB_IMAGE_VERSION:-}")"
+    echo "3) $(menu_image_message both_choice)"
+    echo "4) $(menu_image_message back)"
     echo ""
-    read_prompt "Your choice (1-3): " img_choice
+    read_prompt "$(menu_image_message choice_prompt)" img_choice
 
     case "$img_choice" in
         1)
-            local current_tag="${IMAGE_VERSION:-3.0.1}"
-            read_prompt "Enter new API/CHECK image tag [$current_tag]: " new_tag
+            current_tag="${IMAGE_VERSION:-3.0.1}"
+            read_prompt "$(menu_image_message api_prompt "$current_tag")" new_tag
             _update_image_service "$IMAGE_NAME" "${new_tag:-$current_tag}" "api_check" "IMAGE_VERSION"
             ;;
         2)
-            local current_tag="${WEB_IMAGE_VERSION:-3.0.1}"
-            read_prompt "Enter new WEB image tag [$current_tag]: " new_tag
+            current_tag="${WEB_IMAGE_VERSION:-3.0.1}"
+            read_prompt "$(menu_image_message web_prompt "$current_tag")" new_tag
             _update_image_service "$WEB_IMAGE_NAME" "${new_tag:-$current_tag}" "web" "WEB_IMAGE_VERSION"
+            ;;
+        3)
+            api_tag="${IMAGE_VERSION:-}"
+            web_tag="${WEB_IMAGE_VERSION:-}"
+            if [ -n "$api_tag" ] && [ "$api_tag" = "$web_tag" ]; then
+                read_prompt "$(menu_image_message both_prompt "$api_tag")" new_tag
+                new_tag="${new_tag:-$api_tag}"
+            else
+                read_prompt "$(menu_image_message both_prompt_required)" new_tag
+                if [ -z "$new_tag" ]; then
+                    echo "$(menu_image_message tag_required)"
+                    return 1
+                fi
+            fi
+            if [ "$new_tag" = "$api_tag" ] && [ "$new_tag" = "$web_tag" ]; then
+                echo "$(menu_image_message already_current "$new_tag")"
+                return 0
+            fi
+            read_prompt "$(menu_image_message confirm "$new_tag")" confirm_update
+            case "$confirm_update" in
+                y|Y|j|J) _update_both_images "$new_tag" ;;
+                *) echo "$(menu_image_message cancelled)" ;;
+            esac
             ;;
         *)
             return 0

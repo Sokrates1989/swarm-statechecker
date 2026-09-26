@@ -1,0 +1,33 @@
+#!/bin/bash
+# English copy for the image-update menu. Keep keys in sync with de.sh.
+# Sourced by menu_image_i18n.sh.
+# shellcheck disable=SC2034
+declare -gA STATECHECKER_IMAGE_MENU_EN=(
+    [title]='[UPDATE] Update Image Version'
+    [api_choice]='API/CHECK image (%s:%s)'
+    [web_choice]='WEB image (%s:%s)'
+    [both_choice]='API/CHECK + WEB images (one tag)'
+    [back]='Back'
+    [choice_prompt]='Your choice (1-4): '
+    [api_prompt]='Enter new API/CHECK image tag [%s]: '
+    [web_prompt]='Enter new WEB image tag [%s]: '
+    [both_prompt]='Enter version for both images [%s]: '
+    [both_prompt_required]='Enter version for both images (current tags differ): '
+    [tag_required]='[ERROR] Enter a version because the current image tags differ.'
+    [invalid_tag]='[ERROR] Use an explicit Docker image tag, not latest: %s'
+    [missing_env]='[ERROR] .env is missing; image versions were not changed.'
+    [missing_images]='[ERROR] IMAGE_NAME and WEB_IMAGE_NAME are required.'
+    [already_current]='[INFO] Both images already use %s; no update needed.'
+    [missing_service]='[ERROR] Required Swarm service is missing: %s'
+    [pulling]='[INFO] Pulling %s'
+    [pull_failed]='[ERROR] Could not pull %s; no services were changed.'
+    [confirm]='Update API, CHECK, and WEB to %s? (y/N): '
+    [cancelled]='[INFO] Image update cancelled.'
+    [updating]='[UPDATE] Updating %s to %s'
+    [partial_failure]='[ERROR] Update failed for %s. Earlier services may already be updated; .env was not changed. Inspect service status before retrying.'
+    [env_failure]='[ERROR] Services were updated, but .env could not be saved. Inspect the deployment before redeploying.'
+    [saved]='[OK] API/CHECK and WEB image versions saved as %s.'
+    [checking]='[INFO] Waiting for updated services and public endpoints...'
+    [unhealthy]='[ERROR] Image update finished, but the deployment is not healthy. Check option 4 and service logs.'
+    [health_unavailable]='[WARN] Health check is unavailable; use option 4 to verify the deployment.'
+)

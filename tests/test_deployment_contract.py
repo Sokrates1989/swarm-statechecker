@@ -511,5 +511,189 @@ class GeneratedStackTests(unittest.TestCase):
         self.assertIn("attempts=3", process.stdout)
 
 
+@unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "POSIX Bash required")
+class ImageUpdateMenuTests(unittest.TestCase):
+    """Verify paired image updates without contacting Docker or production."""
+
+    def run_image_update(
+        self,
+        mode: str,
+        new_tag: str = "3.0.2",
+        api_tag: str = "3.0.1",
+        web_tag: str = "3.0.1",
+    ) -> tuple[subprocess.CompletedProcess[str], str, list[str]]:
+        """Run menu choice 3 against a disposable env file and Docker stub."""
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            environment_file = directory / ".env"
+            environment_file.write_text(
+                "STACK_NAME=statechecker\n"
+                "IMAGE_NAME=sokrates1989/statechecker\n"
+                f"IMAGE_VERSION={api_tag}\n"
+                "WEB_IMAGE_NAME=sokrates1989/statechecker-web\n"
+                f"WEB_IMAGE_VERSION={web_tag}\n",
+                encoding="utf-8",
+            )
+            events_file = directory / "docker-events.txt"
+            process = run_bash(
+                r'''
+                    source "$1"
+                    cd "$2"
+                    MODE="$3"
+                    NEW_TAG="$4"
+                    EVENTS_FILE="$5"
+                    prompt_number=0
+                    read_prompt() {
+                        prompt_number=$((prompt_number + 1))
+                        case "$prompt_number" in
+                            1) printf -v "$2" '%s' 3 ;;
+                            2) printf -v "$2" '%s' "$NEW_TAG" ;;
+                            3) printf -v "$2" '%s' y ;;
+                        esac
+                    }
+                    docker() {
+                        case "$1 $2" in
+                            'service inspect') return 0 ;;
+                            'pull '*)
+                                printf '%s\n' "$*" >> "$EVENTS_FILE"
+                                if [ "$MODE" = 'pull-fails' ] &&
+                                    [[ "$2" == *statechecker-web* ]]; then
+                                    return 1
+                                fi
+                                return 0
+                                ;;
+                            'service update')
+                                printf '%s\n' "$*" >> "$EVENTS_FILE"
+                                if [ "$MODE" = 'check-fails' ] &&
+                                    [[ "${*: -1}" == statechecker_check ]]; then
+                                    return 1
+                                fi
+                                return 0
+                                ;;
+                        esac
+                        return 1
+                    }
+                    if [ "$MODE" = 'health-fails' ]; then
+                        wait_for_deployment_readiness() { return 1; }
+                        check_deployment_health() { return 1; }
+                    fi
+                    update_images_menu
+                ''',
+                MENU_HANDLERS,
+                directory,
+                mode,
+                new_tag,
+                events_file,
+                check=False,
+            )
+            events = (
+                events_file.read_text(encoding="utf-8").splitlines()
+                if events_file.exists()
+                else []
+            )
+            return process, environment_file.read_text(encoding="utf-8"), events
+
+    def test_paired_choice_updates_three_services_and_both_env_versions(self) -> None:
+        """Use one tag for API, checker, and web, then persist it twice."""
+
+        process, environment, events = self.run_image_update("success")
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn("3) API/CHECK + WEB images (one tag)", process.stdout)
+        self.assertIn('IMAGE_VERSION="3.0.2"', environment)
+        self.assertIn('WEB_IMAGE_VERSION="3.0.2"', environment)
+        self.assertTrue(events[0].startswith("pull "))
+        self.assertTrue(events[1].startswith("pull "))
+        updates = [event for event in events if event.startswith("service update")]
+        self.assertEqual(len(updates), 3)
+        self.assertIn("statechecker_api", updates[0])
+        self.assertIn("statechecker_check", updates[1])
+        self.assertIn("statechecker_web", updates[2])
+        self.assertIn("sokrates1989/statechecker-web:3.0.2", updates[2])
+
+    def test_paired_choice_requires_one_tag_when_current_tags_differ(self) -> None:
+        """Allow a deliberate shared tag after a previously split rollout."""
+
+        process, environment, events = self.run_image_update(
+            "success", web_tag="3.0.0"
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn('IMAGE_VERSION="3.0.2"', environment)
+        self.assertIn('WEB_IMAGE_VERSION="3.0.2"', environment)
+        self.assertEqual(
+            sum(event.startswith("service update") for event in events), 3
+        )
+
+    def test_paired_choice_stops_before_updates_when_web_pull_fails(self) -> None:
+        """Preserve both old versions if either image is unavailable."""
+
+        process, environment, events = self.run_image_update("pull-fails")
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn("Could not pull", process.stdout)
+        self.assertFalse(any(event.startswith("service update") for event in events))
+        self.assertIn("IMAGE_VERSION=3.0.1", environment)
+        self.assertIn("WEB_IMAGE_VERSION=3.0.1", environment)
+
+    def test_paired_choice_reports_partial_service_failure(self) -> None:
+        """Do not save a shared tag if the checker update fails after API."""
+
+        process, environment, events = self.run_image_update("check-fails")
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn("Earlier services may already be updated", process.stdout)
+        self.assertFalse(any("statechecker_web" in event for event in events if event.startswith("service update")))
+        self.assertIn("IMAGE_VERSION=3.0.1", environment)
+        self.assertIn("WEB_IMAGE_VERSION=3.0.1", environment)
+
+    def test_paired_choice_rejects_latest_and_ambiguous_blank(self) -> None:
+        """Require an explicit immutable-intent tag before contacting Docker."""
+
+        latest, _, latest_events = self.run_image_update("success", new_tag="latest")
+        self.assertNotEqual(latest.returncode, 0)
+        self.assertIn("not latest", latest.stdout)
+        self.assertEqual(latest_events, [])
+
+        blank, _, blank_events = self.run_image_update(
+            "success", new_tag="", web_tag="3.0.0"
+        )
+        self.assertNotEqual(blank.returncode, 0)
+        self.assertIn("current image tags differ", blank.stdout)
+        self.assertEqual(blank_events, [])
+
+    def test_paired_choice_reports_failed_health_after_service_updates(self) -> None:
+        """Do not claim a healthy deployment when post-update checks fail."""
+
+        process, environment, events = self.run_image_update("health-fails")
+        self.assertNotEqual(process.returncode, 0)
+        self.assertEqual(
+            sum(event.startswith("service update") for event in events), 3
+        )
+        self.assertIn('IMAGE_VERSION="3.0.2"', environment)
+        self.assertIn('WEB_IMAGE_VERSION="3.0.2"', environment)
+        self.assertIn("deployment is not healthy", process.stdout)
+
+    def test_image_menu_locales_have_matching_keys(self) -> None:
+        """Keep the new CLI's English and German message sets complete."""
+
+        process = run_bash(
+            r'''
+                source "$1"
+                [ "${#STATECHECKER_IMAGE_MENU_EN[@]}" -eq "${#STATECHECKER_IMAGE_MENU_DE[@]}" ] || exit 1
+                for key in "${!STATECHECKER_IMAGE_MENU_EN[@]}"; do
+                    [ -n "${STATECHECKER_IMAGE_MENU_DE[$key]:-}" ] || exit 1
+                    en_without_slots="${STATECHECKER_IMAGE_MENU_EN[$key]//%s/}"
+                    de_without_slots="${STATECHECKER_IMAGE_MENU_DE[$key]//%s/}"
+                    en_slots=$(( (${#STATECHECKER_IMAGE_MENU_EN[$key]} - ${#en_without_slots}) / 2 ))
+                    de_slots=$(( (${#STATECHECKER_IMAGE_MENU_DE[$key]} - ${#de_without_slots}) / 2 ))
+                    [ "$en_slots" -eq "$de_slots" ] || exit 1
+                done
+                LC_ALL=de_DE.UTF-8 menu_image_message both_choice
+                LC_ALL=fr_FR.UTF-8 menu_image_message both_choice
+            ''',
+            SETUP_DIRECTORY / "modules" / "menu_image_i18n.sh",
+        )
+        self.assertIn("API/CHECK- und WEB-Images", process.stdout)
+        self.assertIn("API/CHECK + WEB images", process.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
