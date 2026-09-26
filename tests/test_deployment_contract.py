@@ -536,6 +536,21 @@ class ImageUpdateMenuTests(unittest.TestCase):
                 encoding="utf-8",
             )
             events_file = directory / "docker-events.txt"
+            specs_file = directory / "service-images.txt"
+            api_digest = "a" * 64
+            web_digest = "b" * 64
+            if mode == "already-pinned":
+                api_spec = f"sokrates1989/statechecker@sha256:{api_digest}"
+                web_spec = f"sokrates1989/statechecker-web@sha256:{web_digest}"
+            else:
+                api_spec = f"sokrates1989/statechecker:{api_tag}"
+                web_spec = f"sokrates1989/statechecker-web:{web_tag}"
+            specs_file.write_text(
+                f"statechecker_api={api_spec}\n"
+                f"statechecker_check={api_spec}\n"
+                f"statechecker_web={web_spec}\n",
+                encoding="utf-8",
+            )
             process = run_bash(
                 r'''
                     source "$1"
@@ -543,6 +558,9 @@ class ImageUpdateMenuTests(unittest.TestCase):
                     MODE="$3"
                     NEW_TAG="$4"
                     EVENTS_FILE="$5"
+                    SPECS_FILE="$6"
+                    API_DIGEST="$7"
+                    WEB_DIGEST="$8"
                     prompt_number=0
                     read_prompt() {
                         prompt_number=$((prompt_number + 1))
@@ -553,13 +571,44 @@ class ImageUpdateMenuTests(unittest.TestCase):
                         esac
                     }
                     docker() {
+                        local service image
                         case "$1 $2" in
-                            'service inspect') return 0 ;;
+                            'service inspect')
+                                if [[ "$*" == *'--format'* ]]; then
+                                    service="${*: -1}"
+                                    sed -n "s/^${service}=//p" "$SPECS_FILE"
+                                fi
+                                return 0
+                                ;;
                             'pull '*)
                                 printf '%s\n' "$*" >> "$EVENTS_FILE"
                                 if [ "$MODE" = 'pull-fails' ] &&
                                     [[ "$2" == *statechecker-web* ]]; then
                                     return 1
+                                fi
+                                return 0
+                                ;;
+                            'image inspect')
+                                image="${*: -1}"
+                                if [[ "$image" == *statechecker-web* ]]; then
+                                    if [ "$MODE" = 'digest-missing' ]; then
+                                        return 0
+                                    fi
+                                    if [ "$MODE" = 'digest-invalid' ]; then
+                                        printf '%s\n' 'sokrates1989/statechecker-web@sha256:bad'
+                                        return 0
+                                    fi
+                                    if [ "$MODE" = 'digest-ambiguous' ]; then
+                                        printf '%s\n' \
+                                            "sokrates1989/statechecker-web@sha256:$WEB_DIGEST" \
+                                            "sokrates1989/statechecker-web@sha256:$API_DIGEST"
+                                        return 0
+                                    fi
+                                    printf '%s\n' "sokrates1989/statechecker-web@sha256:$WEB_DIGEST"
+                                else
+                                    printf '%s\n' \
+                                        "unrelated/image@sha256:$WEB_DIGEST" \
+                                        "sokrates1989/statechecker@sha256:$API_DIGEST"
                                 fi
                                 return 0
                                 ;;
@@ -569,6 +618,13 @@ class ImageUpdateMenuTests(unittest.TestCase):
                                     [[ "${*: -1}" == statechecker_check ]]; then
                                     return 1
                                 fi
+                                if [ "$MODE" = 'spec-mismatch' ] &&
+                                    [[ "${*: -1}" == statechecker_web ]]; then
+                                    return 0
+                                fi
+                                service="${*: -1}"
+                                image="$5"
+                                sed -i "s|^${service}=.*|${service}=${image}|" "$SPECS_FILE"
                                 return 0
                                 ;;
                         esac
@@ -585,6 +641,9 @@ class ImageUpdateMenuTests(unittest.TestCase):
                 mode,
                 new_tag,
                 events_file,
+                specs_file,
+                api_digest,
+                web_digest,
                 check=False,
             )
             events = (
@@ -609,7 +668,9 @@ class ImageUpdateMenuTests(unittest.TestCase):
         self.assertIn("statechecker_api", updates[0])
         self.assertIn("statechecker_check", updates[1])
         self.assertIn("statechecker_web", updates[2])
-        self.assertIn("sokrates1989/statechecker-web:3.0.2", updates[2])
+        self.assertIn(f"sokrates1989/statechecker@sha256:{'a' * 64}", updates[0])
+        self.assertIn(f"sokrates1989/statechecker@sha256:{'a' * 64}", updates[1])
+        self.assertIn(f"sokrates1989/statechecker-web@sha256:{'b' * 64}", updates[2])
 
     def test_paired_choice_requires_one_tag_when_current_tags_differ(self) -> None:
         """Allow a deliberate shared tag after a previously split rollout."""
@@ -631,6 +692,55 @@ class ImageUpdateMenuTests(unittest.TestCase):
         self.assertNotEqual(process.returncode, 0)
         self.assertIn("Could not pull", process.stdout)
         self.assertFalse(any(event.startswith("service update") for event in events))
+        self.assertIn("IMAGE_VERSION=3.0.1", environment)
+        self.assertIn("WEB_IMAGE_VERSION=3.0.1", environment)
+
+    def test_paired_choice_rejects_unusable_digests_before_service_changes(self) -> None:
+        """Require one valid pulled digest for each repository."""
+
+        for mode in ("digest-missing", "digest-invalid", "digest-ambiguous"):
+            with self.subTest(mode=mode):
+                process, environment, events = self.run_image_update(mode)
+                self.assertNotEqual(process.returncode, 0)
+                self.assertIn("Could not resolve one unambiguous digest", process.stdout)
+                self.assertFalse(
+                    any(event.startswith("service update") for event in events)
+                )
+                self.assertIn("IMAGE_VERSION=3.0.1", environment)
+                self.assertIn("WEB_IMAGE_VERSION=3.0.1", environment)
+
+    def test_paired_choice_repins_existing_tag_only_services(self) -> None:
+        """Allow the current tag to repair a service lacking a digest."""
+
+        process, environment, events = self.run_image_update(
+            "success", new_tag="3.0.1"
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertEqual(
+            sum(event.startswith("service update") for event in events), 3
+        )
+        self.assertIn('IMAGE_VERSION="3.0.1"', environment)
+
+    def test_paired_choice_skips_services_already_pinned_to_pulled_digests(self) -> None:
+        """Avoid needless rollouts when service specs are already exact."""
+
+        process, environment, events = self.run_image_update(
+            "already-pinned", new_tag="3.0.1"
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn("no update needed", process.stdout)
+        self.assertFalse(any(event.startswith("service update") for event in events))
+        self.assertIn("IMAGE_VERSION=3.0.1", environment)
+
+    def test_paired_choice_requires_updated_service_spec_to_match_digest(self) -> None:
+        """Do not save tags when Docker reports success but omits the pin."""
+
+        process, environment, events = self.run_image_update("spec-mismatch")
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn("Earlier services may already be updated", process.stdout)
+        self.assertEqual(
+            sum(event.startswith("service update") for event in events), 3
+        )
         self.assertIn("IMAGE_VERSION=3.0.1", environment)
         self.assertIn("WEB_IMAGE_VERSION=3.0.1", environment)
 

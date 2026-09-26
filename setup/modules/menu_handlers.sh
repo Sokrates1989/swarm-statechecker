@@ -262,10 +262,38 @@ _update_image_service() {
     echo "✅ Update initiated. Monitor with: docker stack services $stack_name"
 }
 
+# _pulled_image_digest_reference
+# Resolve a just-pulled tag to one registry digest for its exact repository.
+# Arguments: $1 repository name; $2 explicit tag.
+# Output: repository@sha256:digest on success; nothing on failure.
+# Returns nonzero when Docker has no unique valid digest for that repository.
+_pulled_image_digest_reference() {
+    local repository="$1"
+    local tag="$2"
+    local digests candidate digest resolved=""
+
+    digests=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+        "${repository}:${tag}") || return 1
+    while IFS= read -r candidate; do
+        case "$candidate" in
+            "${repository}@sha256:"*|"docker.io/${repository}@sha256:"*|"index.docker.io/${repository}@sha256:"*)
+                digest="${candidate##*@}"
+                [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+                if [ -n "$resolved" ] && [ "$resolved" != "${repository}@${digest}" ]; then
+                    return 1
+                fi
+                resolved="${repository}@${digest}"
+                ;;
+        esac
+    done <<< "$digests"
+    [ -n "$resolved" ] || return 1
+    printf '%s\n' "$resolved"
+}
+
 # _update_both_images
-# Update API, checker, and web to one verified tag. Persist both version keys
-# only after every service update command succeeds. A failed rollout may be
-# partial; the function reports that state rather than claiming success.
+# Update API, checker, and web to one tag using the digests of both pulled
+# images. Persist both version keys only after every service spec is verified.
+# A failed rollout may be partial and must not claim success.
 # Arguments: $1 shared explicit image tag.
 # The menu's echo wrapper applies semantic terminal colors to translated text.
 # shellcheck disable=SC2005
@@ -274,7 +302,8 @@ _update_both_images() {
     local stack_name="${STACK_NAME:-statechecker}"
     local api_image="${IMAGE_NAME:-}"
     local web_image="${WEB_IMAGE_NAME:-}"
-    local service image candidate
+    local service image candidate api_reference web_reference current_reference
+    local services_to_update=()
 
     if [[ ! "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || [ "$tag" = "latest" ]; then
         echo "$(menu_image_message invalid_tag "$tag")"
@@ -288,11 +317,6 @@ _update_both_images() {
         echo "$(menu_image_message missing_images)"
         return 1
     fi
-    if [ "${IMAGE_VERSION:-}" = "$tag" ] && [ "${WEB_IMAGE_VERSION:-}" = "$tag" ]; then
-        echo "$(menu_image_message already_current "$tag")"
-        return 0
-    fi
-
     for service in api check web; do
         if ! docker service inspect "${stack_name}_${service}" >/dev/null 2>&1; then
             echo "$(menu_image_message missing_service "${stack_name}_${service}")"
@@ -308,11 +332,46 @@ _update_both_images() {
         fi
     done
 
+    api_reference=$(_pulled_image_digest_reference "$api_image" "$tag") || {
+        echo "$(menu_image_message digest_unavailable "${api_image}:${tag}")"
+        return 1
+    }
+    web_reference=$(_pulled_image_digest_reference "$web_image" "$tag") || {
+        echo "$(menu_image_message digest_unavailable "${web_image}:${tag}")"
+        return 1
+    }
+
     for service in api check web; do
-        image="${api_image}:${tag}"
-        [ "$service" = web ] && image="${web_image}:${tag}"
+        image="$api_reference"
+        [ "$service" = web ] && image="$web_reference"
+        current_reference=$(docker service inspect \
+            --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' \
+            "${stack_name}_${service}") || {
+            echo "$(menu_image_message inspect_failed "${stack_name}_${service}")"
+            return 1
+        }
+        [ "$current_reference" = "$image" ] || services_to_update+=("$service")
+    done
+
+    if [ "${#services_to_update[@]}" -eq 0 ] &&
+        [ "${IMAGE_VERSION:-}" = "$tag" ] &&
+        [ "${WEB_IMAGE_VERSION:-}" = "$tag" ]; then
+        echo "$(menu_image_message already_current "$tag")"
+        return 0
+    fi
+
+    for service in "${services_to_update[@]}"; do
+        image="$api_reference"
+        [ "$service" = web ] && image="$web_reference"
         echo "$(menu_image_message updating "${stack_name}_${service}" "$image")"
         if ! docker service update --detach=false --image "$image" "${stack_name}_${service}"; then
+            echo "$(menu_image_message partial_failure "${stack_name}_${service}")"
+            return 1
+        fi
+        current_reference=$(docker service inspect \
+            --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' \
+            "${stack_name}_${service}") || current_reference=""
+        if [ "$current_reference" != "$image" ]; then
             echo "$(menu_image_message partial_failure "${stack_name}_${service}")"
             return 1
         fi
@@ -390,10 +449,6 @@ update_images_menu() {
                     echo "$(menu_image_message tag_required)"
                     return 1
                 fi
-            fi
-            if [ "$new_tag" = "$api_tag" ] && [ "$new_tag" = "$web_tag" ]; then
-                echo "$(menu_image_message already_current "$new_tag")"
-                return 0
             fi
             read_prompt "$(menu_image_message confirm "$new_tag")" confirm_update
             case "$confirm_update" in

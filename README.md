@@ -51,12 +51,16 @@ branch, or cannot verify its upstream safely.
 
 Management option `6` updates deployed image versions. Choose API/CHECK, Web,
 or **both**. The paired choice asks for one explicit tag, checks that all three
-Swarm services exist, pulls both images before changing a service, then updates
-API, CHECK, and Web. It saves both `.env` version keys only after all three
-service-update commands succeed and runs the deployment readiness and health
-checks. A failure during service updates can leave a partial rollout; inspect
-the reported service state before retrying. The menu rejects `latest` for the
-paired update. This option uses published images; it does not build or push.
+Swarm services exist, pulls both images, and resolves their exact repository
+digests before changing any service. It updates API, CHECK, and Web using those
+digests, verifies each service spec, saves both `.env` version keys only after
+successful updates, and runs readiness and health checks. If the same tag is
+already configured, this choice can pin services that still use tag-only image
+references. A missing or ambiguous digest stops the update before any service
+change; a failure after updates begin can leave a partial rollout. Inspect the
+reported service state before retrying. The menu rejects `latest`. This option
+uses published images; it does not build or push. A later stack redeploy uses
+the version tags from `.env` and may replace these digest-pinned service specs.
 
 <br>
 <br>
