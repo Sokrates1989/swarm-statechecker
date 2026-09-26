@@ -22,6 +22,7 @@ declare -gA STATECHECKER_IMAGE_MENU_EN=(
     [pulling]='[INFO] Pulling %s'
     [pull_failed]='[ERROR] Could not pull %s; no services were changed.'
     [digest_unavailable]='[ERROR] Could not resolve one unambiguous digest for %s; no services were changed.'
+    [render_mismatch]='[ERROR] Rendered API, CHECK, or WEB image does not match its resolved digest; no services were changed.'
     [inspect_failed]='[ERROR] Could not inspect the image of %s; no services were changed.'
     [confirm]='Update API, CHECK, and WEB to %s? (y/N): '
     [cancelled]='[INFO] Image update cancelled.'

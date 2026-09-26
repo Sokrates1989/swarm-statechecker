@@ -1,7 +1,7 @@
 
   # Statechecker API Service
   api:
-    image: ${IMAGE_NAME}:${IMAGE_VERSION}
+    image: ${API_IMAGE_REFERENCE:-${IMAGE_NAME}:${IMAGE_VERSION}}
     environment:
       # API Authentication.
       - SERVER_AUTHENTICATION_TOKEN_FILE=/run/secrets/STATECHECKER_SERVER_AUTHENTICATION_TOKEN

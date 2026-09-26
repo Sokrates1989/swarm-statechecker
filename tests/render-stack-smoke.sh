@@ -43,7 +43,8 @@ cp -R "${REPOSITORY_ROOT}/setup/compose-modules" "${TEMPORARY_ROOT}/project/setu
 source "$CONFIG_BUILDER"
 
 render_mode() {
-    # Generate and validate one proxy/SSL combination.
+    # Generate one proxy/SSL combination and validate digest overrides for the
+    # proxy-TLS case without contacting Swarm.
     local proxy_type="$1"
     local ssl_mode="$2"
     local project_root="${TEMPORARY_ROOT}/project"
@@ -57,6 +58,19 @@ render_mode() {
         --env-file "$ENVIRONMENT_TEMPLATE" \
         -f "${project_root}/swarm-stack.yml" \
         config --quiet
+
+    if [ "$proxy_type" = traefik ] && [ "$ssl_mode" = proxy ]; then
+        local api_reference web_reference rendered_images
+        api_reference="sokrates1989/statechecker@sha256:$(printf '%064d' 0 | tr 0 a)"
+        web_reference="sokrates1989/statechecker-web@sha256:$(printf '%064d' 0 | tr 0 b)"
+        rendered_images=$(
+            API_IMAGE_REFERENCE="$api_reference" WEB_IMAGE_REFERENCE="$web_reference" \
+                "${COMPOSE_COMMAND[@]}" --env-file "$ENVIRONMENT_TEMPLATE" \
+                -f "${project_root}/swarm-stack.yml" config --images
+        )
+        [ "$(grep -Fxc "$api_reference" <<< "$rendered_images")" -eq 2 ]
+        [ "$(grep -Fxc "$web_reference" <<< "$rendered_images")" -eq 1 ]
+    fi
 }
 
 render_mode none direct

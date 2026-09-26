@@ -1,5 +1,5 @@
 #!/bin/bash
-# Image-update menu translations without an extra runtime dependency.
+# Image management and deployment translations without an extra runtime dependency.
 
 IMAGE_MENU_I18N_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null

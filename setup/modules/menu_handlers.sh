@@ -786,6 +786,35 @@ _render_stack_config() {
     "${compose_cmd[@]}" -f swarm-stack.yml "${compose_env_opt[@]}" config > "$output_file"
 }
 
+_rendered_stack_has_pinned_images() {
+    # _rendered_stack_has_pinned_images
+    # Require the rendered API, checker, and web services to use the resolved
+    # repository digests before stack deploy can change any service.
+    # Arguments: $1 rendered stack; $2 API/CHECK reference; $3 Web reference.
+    # Returns nonzero if a service image differs or is absent.
+    local rendered_stack="$1"
+    local api_reference="$2"
+    local web_reference="$3"
+
+    awk -v api_reference="$api_reference" -v web_reference="$web_reference" '
+        /^services:$/ { in_services=1; next }
+        in_services && /^[^[:space:]]/ { in_services=0; service="" }
+        in_services && /^  [^[:space:]]+:[[:space:]]*$/ {
+            service=$1
+            sub(/:$/, "", service)
+            next
+        }
+        in_services && /^    image:[[:space:]]/ &&
+            (service=="api" || service=="check" || service=="web") {
+            expected=(service=="web" ? web_reference : api_reference)
+            if ($2 != expected) mismatch=1
+            seen[service]=1
+        }
+        END { exit mismatch || !seen["api"] || !seen["check"] || !seen["web"] }
+    ' "$rendered_stack"
+}
+
+
 deploy_stack() {
     # deploy_stack
     # Deploys the Docker Swarm stack using swarm-stack.yml.
@@ -793,7 +822,7 @@ deploy_stack() {
     load_env
 
     local stack_name="${STACK_NAME:-statechecker}"
-    local cmd_str
+    local cmd_str api_image web_image api_reference web_reference image
     cmd_str=$(_get_compose_command)
 
     echo "🚀 Deploying stack: $stack_name"
@@ -807,6 +836,26 @@ deploy_stack() {
     if ! run_deployment_preflight ".env" "swarm-stack.yml"; then
         return 1
     fi
+
+    # Resolve both tags before any secret or service changes. The references
+    # exist only for this render; .env keeps its operator-readable version tags.
+    api_image="${IMAGE_NAME}:${IMAGE_VERSION}"
+    web_image="${WEB_IMAGE_NAME}:${WEB_IMAGE_VERSION}"
+    for image in "$api_image" "$web_image"; do
+        echo "$(menu_image_message pulling "$image")"
+        if ! docker pull "$image"; then
+            echo "$(menu_image_message pull_failed "$image")"
+            return 1
+        fi
+    done
+    api_reference=$(_pulled_image_digest_reference "$IMAGE_NAME" "$IMAGE_VERSION") || {
+        echo "$(menu_image_message digest_unavailable "$api_image")"
+        return 1
+    }
+    web_reference=$(_pulled_image_digest_reference "$WEB_IMAGE_NAME" "$WEB_IMAGE_VERSION") || {
+        echo "$(menu_image_message digest_unavailable "$web_image")"
+        return 1
+    }
 
     if [ "${TELEGRAM_ENABLED:-false}" != "true" ] && ! check_secret_exists "STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN"; then
         echo "[INFO] TELEGRAM_ENABLED=false and secret missing; creating placeholder secret STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN"
@@ -824,7 +873,10 @@ deploy_stack() {
     fi
 
     local temp_config=".stack-deploy-temp.yml"
-    if ! _render_stack_config "$cmd_str" ".env" "$temp_config"; then
+    if ! (
+        export API_IMAGE_REFERENCE="$api_reference" WEB_IMAGE_REFERENCE="$web_reference"
+        _render_stack_config "$cmd_str" ".env" "$temp_config"
+    ); then
         echo "❌ Failed to render swarm-stack.yml via docker compose"
         rm -f "$temp_config" 2>/dev/null || true
         return 1
@@ -839,6 +891,12 @@ deploy_stack() {
     if [ "${PROXY_TYPE:-traefik}" = "none" ]; then
         echo "[INFO] PROXY_TYPE=none: deploying without Traefik (direct ports)"
         _apply_no_proxy_transformations "$temp_config" || { rm -f "$temp_config" 2>/dev/null || true; return 1; }
+    fi
+
+    if ! _rendered_stack_has_pinned_images "$temp_config" "$api_reference" "$web_reference"; then
+        echo "$(menu_image_message render_mismatch)"
+        rm -f "$temp_config" 2>/dev/null || true
+        return 1
     fi
 
     docker stack deploy -c "$temp_config" "$stack_name"

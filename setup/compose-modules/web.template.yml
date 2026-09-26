@@ -1,7 +1,7 @@
 
   # Statechecker Web Service (Nginx frontend)
   web:
-    image: ${WEB_IMAGE_NAME}:${WEB_IMAGE_VERSION}
+    image: ${WEB_IMAGE_REFERENCE:-${WEB_IMAGE_NAME}:${WEB_IMAGE_VERSION}}
     environment:
       - API_UPSTREAM=${STACK_NAME}_api:${API_PORT}
       # Keycloak authentication (required for Web UI).

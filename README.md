@@ -31,7 +31,10 @@ Services:
 - **web**: Nginx web interface
 - **phpmyadmin**: optional DB UI
 
-The stack uses `${IMAGE_NAME}:${IMAGE_VERSION}` (from `.env`) for both `api` and `check`.
+The stack keeps `${IMAGE_NAME}:${IMAGE_VERSION}` (from `.env`) for both `api`
+and `check`. During a normal deploy, the CLI pulls the configured API/CHECK
+and Web tags, resolves one digest for each repository, and renders those
+digest references into the stack. The `.env` file keeps readable version tags.
 
 <br>
 <br>
@@ -59,8 +62,10 @@ already configured, this choice can pin services that still use tag-only image
 references. A missing or ambiguous digest stops the update before any service
 change; a failure after updates begin can leave a partial rollout. Inspect the
 reported service state before retrying. The menu rejects `latest`. This option
-uses published images; it does not build or push. A later stack redeploy uses
-the version tags from `.env` and may replace these digest-pinned service specs.
+uses published images; it does not build or push. A later normal stack redeploy
+resolves the configured version tags again and retains digest-pinned service
+specs. It stops before service changes if a pull, digest lookup, or rendered
+image check fails.
 
 <br>
 <br>
@@ -121,7 +126,12 @@ Use the quick-start menu:
 
 Deployment renders `swarm-stack.yml` with Docker Compose before running
 `docker stack deploy`. The preflight fails when required configuration,
-secrets, generated services, or the selected Traefik network are missing.
+secrets, generated services, or the selected Traefik network are missing. It
+also pulls both application images and verifies the rendered API, CHECK, and
+Web digest references before changing services.
+
+For peer monitoring, health checks, and emergency API restoration, see
+[Always-up operations](docs/always-up-operations.md).
 
 The health command fails when persistent services are not converged, active
 tasks are rejected or failed, the migration task failed, or the public API/web

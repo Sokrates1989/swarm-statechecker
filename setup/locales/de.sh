@@ -22,6 +22,7 @@ declare -gA STATECHECKER_IMAGE_MENU_DE=(
     [pulling]='[INFO] Lade %s'
     [pull_failed]='[ERROR] %s konnte nicht geladen werden; kein Dienst wurde geändert.'
     [digest_unavailable]='[ERROR] Für %s konnte kein eindeutiger Digest ermittelt werden; kein Dienst wurde geändert.'
+    [render_mismatch]='[ERROR] Das gerenderte API-, CHECK- oder WEB-Image stimmt nicht mit seinem ermittelten Digest überein; kein Dienst wurde geändert.'
     [inspect_failed]='[ERROR] Das Image von %s konnte nicht geprüft werden; kein Dienst wurde geändert.'
     [confirm]='API, CHECK und WEB auf %s aktualisieren? (j/N): '
     [cancelled]='[INFO] Image-Update abgebrochen.'
