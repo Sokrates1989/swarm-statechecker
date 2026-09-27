@@ -115,6 +115,21 @@ class DeploymentContractTests(unittest.TestCase):
             application_templates.count("INIT_GOOGLE_DRIVE_FOLDERS="), 2
         )
 
+    def test_api_and_checker_share_telegram_test_configuration(self) -> None:
+        """The API test sender must use the worker's secret and destinations."""
+
+        for file_name in ("api.template.yml", "check.template.yml"):
+            template = (COMPOSE_DIRECTORY / file_name).read_text(encoding="utf-8")
+            self.assertIn("TELEGRAM_ENABLED=${TELEGRAM_ENABLED}", template)
+            self.assertIn(
+                "TELEGRAM_SENDER_BOT_TOKEN_FILE=/run/secrets/"
+                "STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN",
+                template,
+            )
+            self.assertIn("TELEGRAM_RECIPIENTS_ERROR_CHAT_IDS=", template)
+            self.assertIn("TELEGRAM_RECIPIENTS_INFO_CHAT_IDS=", template)
+            self.assertIn("- STATECHECKER_SERVER_TELEGRAM_SENDER_BOT_TOKEN", template)
+
     def test_direct_port_placeholders_are_service_level_fields(self) -> None:
         """Keep direct ports outside the Swarm-only deploy section."""
 

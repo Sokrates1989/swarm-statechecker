@@ -82,6 +82,10 @@ The stack deploys:
 - **db-migration** - Database migration runner
 - **phpmyadmin** - Database admin UI (optional, controlled by PHPMYADMIN_REPLICAS)
 
+The API receives the Telegram bot secret and the same error/info chat IDs as
+the checker so authenticated administrators can send a test notification from
+the Statechecker web UI. The secret is never returned to the browser.
+
 ## 🗄️ Database initialization
 
 The DB init SQL is mounted from:
