@@ -3,6 +3,8 @@
 # Eingebunden durch menu_image_i18n.sh.
 # shellcheck disable=SC2034
 declare -gA STATECHECKER_IMAGE_MENU_DE=(
+    [main_menu_update_choice]='Image-Version aktualisieren'
+    [main_menu_choice_prompt]='Auswahl (1-%s, i/r/u): '
     [title]='[UPDATE] Image-Version aktualisieren'
     [api_choice]='API/CHECK-Image (%s:%s)'
     [web_choice]='WEB-Image (%s:%s)'

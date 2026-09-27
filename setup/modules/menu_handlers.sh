@@ -771,20 +771,49 @@ _get_compose_command() {
     fi
 }
 
-_render_stack_config() {
+_render_stack_config() (
     # _render_stack_config
-    # Renders swarm-stack.yml using docker compose config.
+    # Render digest references directly so Compose versions with different
+    # nested interpolation behavior deploy the same immutable images.
+    # Arguments: $1 Compose command, $2 env file, $3 rendered output path.
+    # Globals: API_IMAGE_REFERENCE and WEB_IMAGE_REFERENCE.
+    # Writes the output file; removes its temporary input on exit.
+    # Returns nonzero when an image is missing or Compose fails.
     local compose_cmd=($1)
     local env_file="$2"
     local output_file="$3"
+    local pinned_stack
+
+    [ -n "${API_IMAGE_REFERENCE:-}" ] && [ -n "${WEB_IMAGE_REFERENCE:-}" ] || return 1
+    pinned_stack=$(mktemp .stack-image-pinned.XXXXXX) || return 1
+    trap 'rm -f -- "$pinned_stack"' EXIT
+    if ! awk -v api_reference="$API_IMAGE_REFERENCE" \
+        -v web_reference="$WEB_IMAGE_REFERENCE" '
+        /^  (api|check|web):[[:space:]]*$/ {
+            service=$1
+            sub(/:$/, "", service)
+            print
+            next
+        }
+        /^  [^[:space:]]+:[[:space:]]*$/ { service="" }
+        service != "" && /^    image:[[:space:]]/ {
+            print "    image: " (service=="web" ? web_reference : api_reference)
+            seen[service]++
+            next
+        }
+        { print }
+        END { exit seen["api"]!=1 || seen["check"]!=1 || seen["web"]!=1 }
+    ' swarm-stack.yml > "$pinned_stack"; then
+        return 1
+    fi
 
     local compose_env_opt=()
     if [ -f "$env_file" ] && "${compose_cmd[@]}" --help 2>/dev/null | grep -q -- '--env-file'; then
         compose_env_opt=(--env-file "$env_file")
     fi
 
-    "${compose_cmd[@]}" -f swarm-stack.yml "${compose_env_opt[@]}" config > "$output_file"
-}
+    "${compose_cmd[@]}" -f "$pinned_stack" "${compose_env_opt[@]}" config > "$output_file"
+)
 
 _rendered_stack_has_pinned_images() {
     # _rendered_stack_has_pinned_images
@@ -807,7 +836,12 @@ _rendered_stack_has_pinned_images() {
         in_services && /^    image:[[:space:]]/ &&
             (service=="api" || service=="check" || service=="web") {
             expected=(service=="web" ? web_reference : api_reference)
-            if ($2 != expected) mismatch=1
+            image=$2
+            sub(/\r$/, "", image)
+            if (substr(image,1,1)=="\"" || substr(image,1,1)=="\047") {
+                image=substr(image,2,length(image)-2)
+            }
+            if (image != expected) mismatch=1
             seen[service]=1
         }
         END { exit mismatch || !seen["api"] || !seen["check"] || !seen["web"] }
@@ -1275,7 +1309,7 @@ _print_main_menu_text() {
     echo "  5) View service logs"
     echo ""
     echo "$(_menu_heading 'Management:')"
-    echo "  6) Update image version"
+    echo "  6/i) $(menu_image_message main_menu_update_choice)"
     echo "  7) Scale services"
     echo "  8) Toggle phpMyAdmin (enable/disable)"
     echo ""
@@ -1339,7 +1373,7 @@ _handle_main_menu_choice() {
         3) show_stack_status ;;
         4) check_stack_health ;;
         5) show_stack_logs ;;
-        6) update_images_menu ;;
+        6|i|I) update_images_menu ;;
         7) scale_services_menu ;;
         8) toggle_phpmyadmin ;;
         9)
@@ -1399,7 +1433,7 @@ show_main_menu() {
      
      while true; do
         _print_main_menu_text "$MENU_EXIT"
-        read_prompt "Your choice (1-${MENU_EXIT}, r/u): " choice
+        read_prompt "$(menu_image_message main_menu_choice_prompt "$MENU_EXIT")" choice
         _handle_main_menu_choice "$choice" "$MENU_EXIT" "$1"
      done
  }

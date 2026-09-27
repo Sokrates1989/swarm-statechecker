@@ -52,17 +52,19 @@ fast-forward-only update and restart the menu. Self-update is blocked when the
 checkout has local changes, is ahead/diverged, uses an unexpected origin or
 branch, or cannot verify its upstream safely.
 
-Management option `6` updates deployed image versions. Choose API/CHECK, Web,
-or **both**. The paired choice asks for one explicit tag, checks that all three
-Swarm services exist, pulls both images, and resolves their exact repository
-digests before changing any service. It updates API, CHECK, and Web using those
-digests, verifies each service spec, saves both `.env` version keys only after
-successful updates, and runs readiness and health checks. If the same tag is
-already configured, this choice can pin services that still use tag-only image
-references. A missing or ambiguous digest stops the update before any service
-change; a failure after updates begin can leave a partial rollout. Inspect the
-reported service state before retrying. The menu rejects `latest`. This option
-uses published images; it does not build or push. A later normal stack redeploy
+Management option `6` (or `i`) updates deployed image versions. Choose
+API/CHECK, Web, or **both**. The paired choice asks for one explicit tag,
+checks that all three Swarm services exist, pulls both images, and resolves
+their exact repository digests before changing any service. It updates API,
+CHECK, and Web using those digests, verifies each service spec, saves both
+`.env` version keys only after successful updates, and runs readiness and
+health checks. If the same tag is already configured, this choice can pin
+services that still use tag-only image references. A missing or ambiguous
+digest stops the update before any service change; a failure after updates
+begin can leave a partial rollout. Inspect the reported service state before
+retrying. The menu rejects `latest`. This option uses published images; it
+does not build or push. When a release changes stack settings or secret
+mounts, run option `1` after the image update. A normal stack redeploy
 resolves the configured version tags again and retains digest-pinned service
 specs. It stops before service changes if a pull, digest lookup, or rendered
 image check fails.

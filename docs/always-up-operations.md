@@ -19,11 +19,12 @@ Require API, CHECK, database, and Web services at `1/1`, with the public API
 and Web endpoints healthy. The one-shot database migration service may show
 `0/1` after completion. For a deploy or image update, inspect the API, CHECK,
 and Web image references in `docker stack services <stack-name>`; they should
-contain `@sha256:`. Menu option `6` updates the paired application images from
-one version tag. Normal menu option `1` also resolves both configured tags to
-digests before stack deploy and leaves the readable tags in `.env`. If a
-pull or digest lookup fails, fix that failure before retrying; do not replace
-the images with `latest`.
+contain `@sha256:`. Menu option `6` or shortcut `i` updates the paired
+application images from one version tag. Run option `1` afterward when a
+release changes stack settings or secret mounts. Option `1` resolves both
+configured tags to digests before stack deploy and leaves the readable tags
+in `.env`. If a pull or digest lookup fails, fix it before retrying; do not
+replace the images with `latest`.
 
 ## Peer ownership and alerts
 

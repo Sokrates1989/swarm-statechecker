@@ -1,4 +1,4 @@
-"""Verify normal stack deploy pins both images before touching Swarm services.
+"""Verify image management and deploy guards without touching Swarm services.
 
 Docker is stubbed at the Bash boundary; these tests do not contact a daemon.
 """
@@ -21,7 +21,138 @@ WEB_DIGEST = "b" * 64
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "POSIX Bash required")
 class DigestDeployTests(unittest.TestCase):
-    """Exercise digest resolution and deploy ordering with disposable inputs."""
+    """Exercise image menu choices and digest pinning with disposable inputs."""
+
+    def test_stack_render_uses_literal_digests_with_legacy_compose(self) -> None:
+        """Pin images before rendering so nested interpolation cannot drop them."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            (directory / "swarm-stack.yml").write_text(
+                "services:\n"
+                "  api:\n"
+                "    image: ${API_IMAGE_REFERENCE:-${IMAGE_NAME}:${IMAGE_VERSION}}\n"
+                "  check:\n"
+                "    image: ${API_IMAGE_REFERENCE:-${IMAGE_NAME}:${IMAGE_VERSION}}\n"
+                "  web:\n"
+                "    image: ${WEB_IMAGE_REFERENCE:-${WEB_IMAGE_NAME}:${WEB_IMAGE_VERSION}}\n"
+                "  db:\n"
+                "    image: mysql:8\n",
+                encoding="utf-8",
+            )
+            process = subprocess.run(
+                [
+                    "bash", "-c",
+                    r'''
+                        set -euo pipefail
+                        source "$1"
+                        API_IMAGE_REFERENCE="sokrates1989/statechecker@sha256:$2"
+                        WEB_IMAGE_REFERENCE="sokrates1989/statechecker-web@sha256:$3"
+                        fake_compose() {
+                            if [ "$1" = --help ]; then
+                                printf '%s\n' '--env-file'
+                                return
+                            fi
+                            [ "$1" = -f ] || return 1
+                            local stack_path="$2"
+                            shift 2
+                            if [ "${1:-}" = --env-file ]; then shift 2; fi
+                            [ "${1:-}" = config ] || return 1
+                            cat "$stack_path"
+                        }
+                        _render_stack_config fake_compose .env rendered.yml
+                        _rendered_stack_has_pinned_images \
+                            rendered.yml "$API_IMAGE_REFERENCE" "$WEB_IMAGE_REFERENCE"
+                    ''',
+                    "statechecker-render-test", str(MENU_HANDLERS), API_DIGEST,
+                    WEB_DIGEST,
+                ],
+                cwd=directory,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(process.returncode, 0, process.stderr)
+            rendered = (directory / "rendered.yml").read_text(encoding="utf-8")
+            self.assertEqual(
+                rendered.count(f"sokrates1989/statechecker@sha256:{API_DIGEST}"),
+                2,
+            )
+            self.assertIn(
+                f"sokrates1989/statechecker-web@sha256:{WEB_DIGEST}", rendered
+            )
+            self.assertIn("image: mysql:8", rendered)
+            self.assertNotIn("${", rendered)
+            self.assertEqual(list(directory.glob(".stack-image-pinned.*")), [])
+
+    def test_rendered_image_check_accepts_quoted_digests(self) -> None:
+        """Compose may quote an otherwise correct immutable image reference."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            rendered = directory / "rendered.yml"
+            rendered.write_text(
+                "services:\n"
+                "  api:\n"
+                f'    image: "sokrates1989/statechecker@sha256:{API_DIGEST}"\n'
+                "  check:\n"
+                f"    image: 'sokrates1989/statechecker@sha256:{API_DIGEST}'\n"
+                "  web:\n"
+                f"    image: sokrates1989/statechecker-web@sha256:{WEB_DIGEST}\n",
+                encoding="utf-8",
+            )
+            command = (
+                'source "$1"; _rendered_stack_has_pinned_images "$2" '
+                '"sokrates1989/statechecker@sha256:$3" '
+                '"sokrates1989/statechecker-web@sha256:$4"'
+            )
+            arguments = [
+                "bash", "-c", command, "statechecker-render-check-test",
+                str(MENU_HANDLERS), str(rendered), API_DIGEST, WEB_DIGEST,
+            ]
+            accepted = subprocess.run(arguments, check=False, capture_output=True)
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+
+            rendered.write_text(
+                rendered.read_text(encoding="utf-8").replace(
+                    f"statechecker-web@sha256:{WEB_DIGEST}",
+                    "statechecker-web:3.1.0",
+                ),
+                encoding="utf-8",
+            )
+            rejected = subprocess.run(arguments, check=False, capture_output=True)
+            self.assertNotEqual(rejected.returncode, 0)
+
+    def test_image_update_shortcut_dispatches_like_option_six(self) -> None:
+        """Both the numeric choice and i shortcut open image management."""
+        for choice in ("6", "i", "I"):
+            with self.subTest(choice=choice):
+                process = subprocess.run(
+                    [
+                        "bash", "-c",
+                        'source "$1"; update_images_menu() { printf "opened\\n"; }; '
+                        '_handle_main_menu_choice "$2" 19 unused',
+                        "statechecker-menu-test", str(MENU_HANDLERS), choice,
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(process.returncode, 0, process.stderr)
+                self.assertEqual(process.stdout, "opened\n")
+
+        menu = subprocess.run(
+            [
+                "bash", "-c",
+                'source "$1"; show_deployment_overview() { :; }; '
+                '_print_main_menu_text 19',
+                "statechecker-menu-test", str(MENU_HANDLERS),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(menu.returncode, 0, menu.stderr)
+        self.assertIn("6/i) Update image version", menu.stdout)
 
     def run_deploy(self, mode: str) -> tuple[subprocess.CompletedProcess[str], list[str], str]:
         """Run one deploy mode and return process, Docker events, and dotenv content."""
