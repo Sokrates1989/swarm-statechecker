@@ -1,9 +1,9 @@
 # Statechecker always-up operations
 
-This runbook covers the two independent Swarm deployments. The active plan in
-`statechecker/plans/active/statechecker-always-up.md` tracks the outage drill,
-image rollout, and operator acceptance. A local code change is not evidence
-that either server runs the new image.
+This runbook covers the two independent Swarm deployments. The completed
+rollout and outage validation are recorded in
+`statechecker/plans/archive/statechecker-always-up.md`. A local code change is
+not evidence that either server runs the new image.
 
 ## Deployment and health
 
